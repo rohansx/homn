@@ -33,6 +33,10 @@ Thumbs.db
 # brainstorm artifacts from superpowers visual companion
 .superpowers/
 
+# ML model caches (accidentally created by tooling; not part of homn)
+.fastembed_cache/
+.cache/
+
 # claude / spec-kit project state — agent folders can hold credentials
 # per spec-kit's security warning; commit policy files explicitly, ignore the rest
 .claude/settings.local.json
