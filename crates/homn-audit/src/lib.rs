@@ -150,6 +150,32 @@ impl Db {
         Ok(id)
     }
 
+    /// Update an existing audit row with the human's answer + which surface answered.
+    /// Called by the daemon when an `Ask` decision is resolved (T032/T033).
+    pub async fn update_human_answer(
+        &self,
+        decision_id: i64,
+        answer: Option<HumanAnswer>,
+        surface: Surface,
+    ) -> anyhow::Result<()> {
+        let answer_str = answer.map(human_answer_as_str).map(str::to_owned);
+        let surface_str = surface_as_str(surface).to_owned();
+        let rows_changed: usize = self
+            .conn
+            .call(move |c| {
+                let n = c.execute(
+                    "UPDATE decisions SET human_answer = ?, surface = ? WHERE id = ?",
+                    rusqlite::params![answer_str, surface_str, decision_id],
+                )?;
+                Ok(n)
+            })
+            .await?;
+        if rows_changed == 0 {
+            anyhow::bail!("no decision with id {decision_id}");
+        }
+        Ok(())
+    }
+
     /// Return the most recent `limit` decisions, newest first.
     pub async fn tail(&self, limit: u32) -> anyhow::Result<Vec<DecisionRecord>> {
         self.query(LogQuery {
@@ -803,6 +829,34 @@ mod tests {
             "expected npm row; got {:?}",
             hits[0].tool_input
         );
+    }
+
+    #[tokio::test]
+    async fn update_human_answer_sets_fields() {
+        let db = Db::in_memory().await.unwrap();
+        let mut d = sample_new_decision();
+        d.decision = Decision::Ask;
+        d.surface = None;
+        let id = db.write_decision(d).await.unwrap();
+
+        db.update_human_answer(id, Some(HumanAnswer::Allow), Surface::Tui)
+            .await
+            .unwrap();
+
+        let rows = db.tail(1).await.unwrap();
+        assert_eq!(rows[0].id, id);
+        assert_eq!(rows[0].human_answer, Some(HumanAnswer::Allow));
+        assert_eq!(rows[0].surface, Some(Surface::Tui));
+    }
+
+    #[tokio::test]
+    async fn update_human_answer_errors_on_missing_id() {
+        let db = Db::in_memory().await.unwrap();
+        let err = db
+            .update_human_answer(9999, Some(HumanAnswer::Deny), Surface::Tui)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no decision with id"));
     }
 
     #[tokio::test]

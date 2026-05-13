@@ -60,6 +60,7 @@ pub async fn dispatch(state: &DaemonState, req: Request) -> Response {
     match req.method.as_str() {
         "ping" => Response::ok(req.id, json!({"pong": true})),
         "decisions.create" => handle_decisions_create(state, req).await,
+        "decisions.resolve" => handle_decisions_resolve(state, req).await,
         other => Response::err(
             req.id,
             ErrorObject::new(
@@ -131,6 +132,35 @@ async fn handle_decisions_create(state: &DaemonState, req: Request) -> Response 
     });
 
     Response::ok(req.id, body)
+}
+
+/// Parameters for `decisions.resolve`. The hook calls this after the TUI prompt closes so the
+/// audit row reflects the human's answer + the surface that answered.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ResolveDecisionParams {
+    decision_id: i64,
+    /// `None` means the user deferred (defer-to-claude or no /dev/tty available).
+    human_answer: Option<homn_types::HumanAnswer>,
+    surface: Surface,
+}
+
+async fn handle_decisions_resolve(state: &DaemonState, req: Request) -> Response {
+    let params: ResolveDecisionParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(err) => {
+            return Response::err(req.id, ErrorObject::new("invalid_params", err.to_string()));
+        }
+    };
+
+    match state
+        .audit
+        .update_human_answer(params.decision_id, params.human_answer, params.surface)
+        .await
+    {
+        Ok(()) => Response::ok(req.id, json!({"ok": true})),
+        Err(err) => Response::err(req.id, ErrorObject::new("resolve_failed", err.to_string())),
+    }
 }
 
 fn decision_as_str(d: Decision) -> &'static str {
@@ -247,6 +277,61 @@ mod tests {
                 assert_eq!(error.code, "invalid_params");
             }
             Response::Ok { .. } => panic!("expected invalid_params error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn decisions_resolve_updates_audit_row() {
+        let state = state_with_rules("").await;
+        // First create an Ask decision (no rule matches → default Ask).
+        let create_resp = dispatch(
+            &state,
+            dc_request("r1", "WebFetch", json!({"url": "https://x"})),
+        )
+        .await;
+        let id = match create_resp {
+            Response::Ok { result, .. } => result["decision_id"].as_i64().unwrap(),
+            Response::Err { error, .. } => panic!("create failed: {error:?}"),
+        };
+
+        // Now resolve it with "allow".
+        let resolve = Request {
+            id: "r2".into(),
+            method: "decisions.resolve".into(),
+            params: json!({
+                "decision_id": id,
+                "human_answer": "allow",
+                "surface": "tui",
+            }),
+        };
+        let resolve_resp = dispatch(&state, resolve).await;
+        match resolve_resp {
+            Response::Ok { result, .. } => assert_eq!(result["ok"], true),
+            Response::Err { error, .. } => panic!("resolve failed: {error:?}"),
+        }
+
+        let rows = state.audit.tail(10).await.unwrap();
+        let row = rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(row.human_answer, Some(homn_types::HumanAnswer::Allow));
+        assert_eq!(row.surface, Some(homn_types::Surface::Tui));
+    }
+
+    #[tokio::test]
+    async fn decisions_resolve_with_unknown_id_errors() {
+        let state = state_with_rules("").await;
+        let resolve = Request {
+            id: "r3".into(),
+            method: "decisions.resolve".into(),
+            params: json!({
+                "decision_id": 99999,
+                "human_answer": "deny",
+                "surface": "tui",
+            }),
+        };
+        let resp = dispatch(&state, resolve).await;
+        match resp {
+            Response::Err { error, .. } => assert_eq!(error.code, "resolve_failed"),
+            Response::Ok { .. } => panic!("expected resolve_failed error"),
         }
     }
 

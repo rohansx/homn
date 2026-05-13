@@ -555,6 +555,7 @@ name = "homn-hook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "homn-tui",
  "homn-types",
  "serde",
  "serde_json",
@@ -605,6 +606,9 @@ name = "homn-tui"
 version = "0.1.0"
 dependencies = [
  "homn-types",
+ "is-terminal",
+ "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]

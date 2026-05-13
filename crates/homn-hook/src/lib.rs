@@ -20,10 +20,11 @@ pub mod install;
 
 pub use install::{default_settings_path, install_snippet, run_install, InstallReport};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use homn_types::{Request, Response};
+use homn_tui::PromptPayload;
+use homn_types::{HumanAnswer, Request, Response, RuleSourceLocation};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -111,18 +112,122 @@ async fn handle_permission_request_inner(
 
     let response = timeout(DAEMON_TIMEOUT, call_daemon(socket_path, &request)).await??;
 
-    let decision = match &response {
-        Response::Ok { result, .. } => result
-            .get("decision")
-            .and_then(|v| v.as_str())
-            .unwrap_or("ask"),
+    let result = match response {
+        Response::Ok { result, .. } => result,
         Response::Err { error, .. } => {
             tracing::warn!(?error, "daemon returned error; falling through to ask");
-            "ask"
+            return Ok(permission_request_response("ask"));
         }
     };
 
-    Ok(permission_request_response(decision))
+    let decision = result
+        .get("decision")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ask");
+
+    // Deterministic decisions short-circuit. Only `ask` triggers the TUI round-trip.
+    if decision != "ask" {
+        return Ok(permission_request_response(decision));
+    }
+
+    // ===== Ask path (T031-T033) =====
+    let decision_id = result
+        .get("decision_id")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let prompt_payload = build_prompt_payload(&payload, &cwd, decision_id, &result);
+
+    // Open the TUI prompt on /dev/tty. Runs on a blocking thread because it does sync file I/O.
+    let answer: Option<HumanAnswer> =
+        tokio::task::spawn_blocking(move || homn_tui::prompt_user(&prompt_payload))
+            .await
+            .unwrap_or(None);
+
+    // Post resolution back to the daemon so the audit row reflects the human's answer.
+    let resolve_req = Request {
+        id: ulid::Ulid::new().to_string(),
+        method: "decisions.resolve".into(),
+        params: json!({
+            "decision_id": decision_id,
+            "human_answer": answer.map(human_answer_str),
+            "surface": "tui",
+        }),
+    };
+    if let Err(err) = call_daemon(socket_path, &resolve_req).await {
+        tracing::warn!(error = %err, "decisions.resolve failed; continuing");
+    }
+
+    // Map the user's answer back to a hook behavior. None = defer = let claude prompt.
+    let behavior = match answer {
+        Some(HumanAnswer::Allow) | Some(HumanAnswer::AlwaysAllow) => "allow",
+        Some(HumanAnswer::Deny) | Some(HumanAnswer::AlwaysDeny) => "deny",
+        None => "ask",
+    };
+    Ok(permission_request_response(behavior))
+}
+
+fn build_prompt_payload(
+    payload: &HookPayload,
+    cwd: &str,
+    decision_id: i64,
+    result: &Value,
+) -> PromptPayload {
+    let preview = preview_tool_input(&payload.tool_input);
+    let rule_source = result
+        .get("rule_source")
+        .filter(|v| !v.is_null())
+        .and_then(|v| {
+            let file = v.get("file").and_then(|x| x.as_str())?;
+            let line = v.get("line").and_then(|x| x.as_u64())? as u32;
+            Some(RuleSourceLocation {
+                file: PathBuf::from(file),
+                line,
+            })
+        });
+    let rule_text = result
+        .get("rule_text")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    PromptPayload {
+        decision_id,
+        session_id: payload.session_id.clone(),
+        tool_name: payload.tool_name.clone(),
+        tool_input_preview: preview,
+        cwd: PathBuf::from(cwd),
+        rule_source,
+        rule_text,
+    }
+}
+
+fn preview_tool_input(v: &Value) -> String {
+    if let Some(cmd) = v.get("command").and_then(|x| x.as_str()) {
+        return clip(cmd, 100);
+    }
+    if let Some(path) = v.get("path").and_then(|x| x.as_str()) {
+        return clip(path, 100);
+    }
+    if let Some(url) = v.get("url").and_then(|x| x.as_str()) {
+        return clip(url, 100);
+    }
+    clip(&v.to_string(), 100)
+}
+
+fn clip(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_owned()
+    } else {
+        format!("{}…", &s[..max - 1])
+    }
+}
+
+fn human_answer_str(a: HumanAnswer) -> &'static str {
+    match a {
+        HumanAnswer::Allow => "allow",
+        HumanAnswer::Deny => "deny",
+        HumanAnswer::AlwaysAllow => "always_allow",
+        HumanAnswer::AlwaysDeny => "always_deny",
+    }
 }
 
 async fn call_daemon(socket_path: &Path, request: &Request) -> anyhow::Result<Response> {

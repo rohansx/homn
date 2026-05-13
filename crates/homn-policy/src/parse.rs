@@ -303,7 +303,8 @@ mod tests {
         // Regression: example.rhai had `url.regex("^https?://...")` which crashed the
         // parser when strip_comment naively cut at the first `//`.
         let eng = Engine::new();
-        let src = r#"ask if tool == "WebFetch" && url.regex("^https?://prod\\.");  // trailing comment"#;
+        let src =
+            r#"ask if tool == "WebFetch" && url.regex("^https?://prod\\.");  // trailing comment"#;
         let rs = RuleSet::parse(&eng, src, "t").expect("rule with // inside string must parse");
         assert_eq!(rs.ask_rules().count(), 1);
     }

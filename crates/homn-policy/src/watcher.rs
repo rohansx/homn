@@ -46,9 +46,7 @@ impl std::fmt::Debug for Reloader {
 /// active.
 pub fn spawn_reloader(engine: Engine, path: impl Into<PathBuf>) -> anyhow::Result<Reloader> {
     let path = path.into();
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.clone());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
     let parent = canonical
         .parent()
         .map(|p| p.to_path_buf())
@@ -164,8 +162,14 @@ mod tests {
 
         // Initial: Read is allowed, Bash unmatched (default ask)
         let initial = reloader.handle.load();
-        assert_eq!(engine.eval(&initial, &req("Read", "")).decision, Decision::Allow);
-        assert_eq!(engine.eval(&initial, &req("Bash", "rm")).decision, Decision::Ask);
+        assert_eq!(
+            engine.eval(&initial, &req("Read", "")).decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            engine.eval(&initial, &req("Bash", "rm")).decision,
+            Decision::Ask
+        );
 
         // Rewrite the file with a new ruleset.
         std::fs::write(
@@ -181,7 +185,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let current = reloader.handle.load();
-            if engine.eval(&current, &req("Bash", "rm -rf /home/rsx/foo")).decision
+            if engine
+                .eval(&current, &req("Bash", "rm -rf /home/rsx/foo"))
+                .decision
                 == Decision::Deny
             {
                 break;
@@ -196,11 +202,16 @@ mod tests {
         // Reread to confirm:
         let after = reloader.handle.load();
         assert_eq!(
-            engine.eval(&after, &req("Bash", "rm -rf /home/rsx/foo")).decision,
+            engine
+                .eval(&after, &req("Bash", "rm -rf /home/rsx/foo"))
+                .decision,
             Decision::Deny
         );
         // Pre-existing rule still in effect:
-        assert_eq!(engine.eval(&after, &req("Read", "")).decision, Decision::Allow);
+        assert_eq!(
+            engine.eval(&after, &req("Read", "")).decision,
+            Decision::Allow
+        );
     }
 
     #[test]
