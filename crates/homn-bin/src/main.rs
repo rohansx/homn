@@ -38,20 +38,41 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Tail or query the audit log. T042 implements.
+    /// Tail or query the audit log.
     Log {
         /// Show only denied decisions.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["allowed", "asked"])]
         denied: bool,
         /// Show only allowed decisions.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["denied", "asked"])]
         allowed: bool,
-        /// Show only ask-resolved decisions.
-        #[arg(long)]
+        /// Show only ask-decisions (i.e. ones that surfaced to a human).
+        #[arg(long, conflicts_with_all = ["denied", "allowed"])]
         asked: bool,
-        /// Output as newline-delimited JSON.
+        /// Only decisions newer than this (e.g. `1h`, `24h`, `7d`, `30m`).
+        #[arg(long)]
+        since: Option<String>,
+        /// Only decisions older than this.
+        #[arg(long)]
+        until: Option<String>,
+        /// Filter to one Claude Code session id.
+        #[arg(long)]
+        session: Option<String>,
+        /// Filter to one tool name (Bash, Read, WebFetch, mcp__*, ...).
+        #[arg(long)]
+        tool: Option<String>,
+        /// FTS5 search across tool_input + tool_name + cwd.
+        #[arg(long)]
+        grep: Option<String>,
+        /// Maximum rows. Default 100.
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        /// Output newline-delimited JSON instead of human-readable text.
         #[arg(long)]
         json: bool,
+        /// Order oldest-first instead of newest-first.
+        #[arg(long)]
+        reverse: bool,
     },
     /// Manage policy rules. T024 / T067 implement.
     Rule {
@@ -132,6 +153,34 @@ async fn main() -> anyhow::Result<()> {
             );
             homn_daemon::run(config).await?;
         }
+        Some(Command::Log {
+            denied,
+            allowed,
+            asked,
+            since,
+            until,
+            session,
+            tool,
+            grep,
+            limit,
+            json,
+            reverse,
+        }) => {
+            log_command(LogArgs {
+                denied,
+                allowed,
+                asked,
+                since,
+                until,
+                session,
+                tool,
+                grep,
+                limit,
+                json,
+                reverse,
+            })
+            .await?;
+        }
         Some(Command::Hook { event }) => {
             // T029: read Claude Code hook payload from stdin, call the daemon, write the
             // expected hook-return JSON to stdout. Exit 0 ALWAYS so Claude falls back to its
@@ -176,5 +225,191 @@ fn init_tracing() {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .try_init();
+}
+
+// ===== `homn log` =====================================================================
+
+struct LogArgs {
+    denied: bool,
+    allowed: bool,
+    asked: bool,
+    since: Option<String>,
+    until: Option<String>,
+    session: Option<String>,
+    tool: Option<String>,
+    grep: Option<String>,
+    limit: u32,
+    json: bool,
+    reverse: bool,
+}
+
+async fn log_command(args: LogArgs) -> anyhow::Result<()> {
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+    let db = homn_audit::Db::open(&config.audit.db_path).await?;
+
+    let now_millis = chrono::Utc::now().timestamp_millis();
+    let since_millis = args
+        .since
+        .as_deref()
+        .map(parse_duration_to_past_millis)
+        .transpose()?;
+    let until_millis = args
+        .until
+        .as_deref()
+        .map(parse_duration_to_past_millis)
+        .transpose()?;
+
+    let decision = if args.denied {
+        Some(homn_types::Decision::Deny)
+    } else if args.allowed {
+        Some(homn_types::Decision::Allow)
+    } else {
+        None
+    };
+
+    let query = homn_audit::LogQuery {
+        since_millis,
+        until_millis,
+        decision,
+        asked: args.asked,
+        session_id: args.session.clone(),
+        tool_name: args.tool.clone(),
+        grep: args.grep.clone(),
+        limit: args.limit,
+        ascending: args.reverse,
+    };
+
+    let rows = db.query(query).await?;
+
+    if args.json {
+        for row in &rows {
+            println!("{}", serde_json::to_string(row)?);
+        }
+    } else {
+        let _ = now_millis; // (reserved for "X seconds ago" rendering)
+        let tty = is_terminal::IsTerminal::is_terminal(&std::io::stdout());
+        let style = if tty { Style::ansi() } else { Style::plain() };
+        for row in &rows {
+            render_row_human(row, &style);
+        }
+        if rows.is_empty() {
+            eprintln!("(no matching decisions)");
+        }
+    }
+    Ok(())
+}
+
+/// Parse `"1h"`, `"30m"`, `"7d"` → unix-epoch-millis at `now - that duration`.
+fn parse_duration_to_past_millis(s: &str) -> anyhow::Result<i64> {
+    let dur = humantime::parse_duration(s)
+        .map_err(|e| anyhow::anyhow!("invalid duration `{s}`: {e}"))?;
+    let now = chrono::Utc::now();
+    let past = now - chrono::Duration::from_std(dur).unwrap_or_else(|_| chrono::Duration::zero());
+    Ok(past.timestamp_millis())
+}
+
+struct Style {
+    red: &'static str,
+    green: &'static str,
+    yellow: &'static str,
+    cyan: &'static str,
+    dim: &'static str,
+    reset: &'static str,
+}
+
+impl Style {
+    fn ansi() -> Self {
+        Self {
+            red: "\x1b[31m",
+            green: "\x1b[32m",
+            yellow: "\x1b[33m",
+            cyan: "\x1b[36m",
+            dim: "\x1b[2m",
+            reset: "\x1b[0m",
+        }
+    }
+    fn plain() -> Self {
+        Self {
+            red: "",
+            green: "",
+            yellow: "",
+            cyan: "",
+            dim: "",
+            reset: "",
+        }
+    }
+}
+
+fn render_row_human(row: &homn_types::DecisionRecord, s: &Style) {
+    let ts = chrono::DateTime::<chrono::Local>::from(
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(row.ts_millis as u64),
+    )
+    .format("%Y-%m-%d %H:%M:%S");
+
+    let (color, decision_str) = match row.decision {
+        homn_types::Decision::Allow => (s.green, "allow"),
+        homn_types::Decision::Deny => (s.red, "deny"),
+        homn_types::Decision::Ask => (s.yellow, "ask"),
+    };
+
+    // Header line: timestamp + decision + tool + preview
+    let preview = preview_tool_input(&row.tool_input);
+    println!(
+        "{dim}{ts}{reset}  {color}{decision:<5}{reset}  {cyan}{tool:<10}{reset}  {preview}",
+        dim = s.dim,
+        reset = s.reset,
+        color = color,
+        decision = decision_str,
+        cyan = s.cyan,
+        tool = row.tool_name,
+        preview = preview,
+    );
+
+    // Optional sub-line: rule that fired.
+    if let Some(loc) = &row.rule_source {
+        let line = loc.line;
+        let file = loc.file.display();
+        let rule_text = row.rule_text.as_deref().unwrap_or("").trim();
+        println!(
+            "                       {dim}rule: {file}:{line}{reset}  {dim}— {rule_text}{reset}",
+            dim = s.dim,
+            reset = s.reset,
+        );
+    }
+
+    // Sub-line: session, cwd, latency, source.
+    println!(
+        "                       {dim}session: {session}  cwd: {cwd}  latency: {latency}ms  via: {source:?}{reset}",
+        dim = s.dim,
+        reset = s.reset,
+        session = row.session_id,
+        cwd = row.cwd.display(),
+        latency = row.latency_ms,
+        source = row.source,
+    );
+}
+
+fn preview_tool_input(v: &serde_json::Value) -> String {
+    // For common tools, surface the most-readable field. Fall back to the whole JSON.
+    if let Some(cmd) = v.get("command").and_then(|x| x.as_str()) {
+        return clip(cmd);
+    }
+    if let Some(path) = v.get("path").and_then(|x| x.as_str()) {
+        return clip(path);
+    }
+    if let Some(url) = v.get("url").and_then(|x| x.as_str()) {
+        return clip(url);
+    }
+    clip(&v.to_string())
+}
+
+fn clip(s: &str) -> String {
+    if s.len() <= 120 {
+        s.to_owned()
+    } else {
+        format!("{}…", &s[..119])
+    }
 }

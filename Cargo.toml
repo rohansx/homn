@@ -52,6 +52,9 @@ async-trait    = "0.1"
 ulid           = "1"
 rhai           = { version = "1", features = ["serde", "sync"] }
 regex          = "1"
+humantime      = "2"
+chrono         = { version = "0.4", default-features = false, features = ["clock", "std"] }
+is-terminal    = "0.4"
 
 [profile.release]
 opt-level     = 3

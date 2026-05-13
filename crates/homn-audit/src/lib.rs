@@ -152,18 +152,72 @@ impl Db {
 
     /// Return the most recent `limit` decisions, newest first.
     pub async fn tail(&self, limit: u32) -> anyhow::Result<Vec<DecisionRecord>> {
-        let limit_i = limit as i64;
+        self.query(LogQuery {
+            limit,
+            ..Default::default()
+        })
+        .await
+    }
+
+    /// Run a filtered audit-log query. All filters AND together; unset filters match all rows.
+    pub async fn query(&self, q: LogQuery) -> anyhow::Result<Vec<DecisionRecord>> {
+        let mut sql = String::from(
+            "SELECT id, ts, session_id, cwd, tool_name, tool_input, decision,
+                    human_answer, rule_source, rule_text, ctxgraph_hit, latency_ms,
+                    surface, source FROM decisions",
+        );
+        let mut where_clauses: Vec<&'static str> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+
+        // FTS5-backed --grep first (intersect via subquery for efficiency).
+        if let Some(grep) = q.grep.clone() {
+            where_clauses.push("id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH ?)");
+            params.push(Box::new(grep));
+        }
+        if let Some(since) = q.since_millis {
+            where_clauses.push("ts >= ?");
+            params.push(Box::new(since));
+        }
+        if let Some(until) = q.until_millis {
+            where_clauses.push("ts <= ?");
+            params.push(Box::new(until));
+        }
+        if let Some(decision) = q.decision {
+            where_clauses.push("decision = ?");
+            params.push(Box::new(decision_as_str(decision).to_string()));
+        }
+        if q.asked {
+            where_clauses.push("decision = 'ask'");
+        }
+        if let Some(sid) = q.session_id.clone() {
+            where_clauses.push("session_id = ?");
+            params.push(Box::new(sid));
+        }
+        if let Some(tool) = q.tool_name.clone() {
+            where_clauses.push("tool_name = ?");
+            params.push(Box::new(tool));
+        }
+
+        if !where_clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clauses.join(" AND "));
+        }
+        sql.push_str(if q.ascending {
+            " ORDER BY ts ASC, id ASC"
+        } else {
+            " ORDER BY ts DESC, id DESC"
+        });
+        sql.push_str(" LIMIT ?");
+        params.push(Box::new(q.limit.max(1) as i64));
+
         let rows: Vec<SerializedRow> = self
             .conn
             .call(move |c| {
-                let mut stmt = c.prepare(
-                    "SELECT id, ts, session_id, cwd, tool_name, tool_input, decision,
-                            human_answer, rule_source, rule_text, ctxgraph_hit, latency_ms,
-                            surface, source
-                     FROM decisions ORDER BY ts DESC, id DESC LIMIT ?",
-                )?;
+                let mut stmt = c.prepare(&sql)?;
+                let param_refs: Vec<&dyn rusqlite::ToSql> =
+                    params.iter().map(|p| p.as_ref() as &dyn rusqlite::ToSql).collect();
                 let rows = stmt
-                    .query_map([limit_i], |r| {
+                    .query_map(param_refs.as_slice(), |r| {
                         Ok(SerializedRow {
                             id: r.get(0)?,
                             ts: r.get(1)?,
@@ -186,6 +240,39 @@ impl Db {
             })
             .await?;
         rows.into_iter().map(SerializedRow::into_record).collect()
+    }
+}
+
+/// Filter set for [`Db::query`]. All set fields AND together; unset fields match all rows.
+#[derive(Debug, Default, Clone)]
+pub struct LogQuery {
+    /// Lower bound on `ts` (unix epoch millis), inclusive.
+    pub since_millis: Option<i64>,
+    /// Upper bound on `ts`, inclusive.
+    pub until_millis: Option<i64>,
+    /// Filter to a specific decision verb.
+    pub decision: Option<Decision>,
+    /// Convenience: filter to decisions that went through the human surface (decision='ask').
+    pub asked: bool,
+    /// Filter to a specific session id.
+    pub session_id: Option<String>,
+    /// Filter to a specific tool name.
+    pub tool_name: Option<String>,
+    /// FTS5 query string against (tool_input, tool_name, cwd).
+    pub grep: Option<String>,
+    /// Maximum number of rows. Always positive.
+    pub limit: u32,
+    /// Order: `false` = newest first (default), `true` = oldest first.
+    pub ascending: bool,
+}
+
+impl LogQuery {
+    /// Builder helper.
+    pub fn new() -> Self {
+        Self {
+            limit: 100,
+            ..Default::default()
+        }
     }
 }
 
@@ -595,5 +682,140 @@ mod tests {
         }
         let rows = db.tail(3).await.unwrap();
         assert_eq!(rows.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn query_filters_by_decision() {
+        let db = Db::in_memory().await.unwrap();
+        let mut allow = sample_new_decision();
+        allow.decision = Decision::Allow;
+        allow.ts_millis += 1;
+        db.write_decision(sample_new_decision()).await.unwrap(); // deny
+        db.write_decision(allow).await.unwrap();
+
+        let denies = db
+            .query(LogQuery {
+                decision: Some(Decision::Deny),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(denies.len(), 1);
+        assert_eq!(denies[0].decision, Decision::Deny);
+
+        let allows = db
+            .query(LogQuery {
+                decision: Some(Decision::Allow),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(allows.len(), 1);
+        assert_eq!(allows[0].decision, Decision::Allow);
+    }
+
+    #[tokio::test]
+    async fn query_filters_by_since() {
+        let db = Db::in_memory().await.unwrap();
+        for i in 0..5_i64 {
+            let mut d = sample_new_decision();
+            d.ts_millis = 1_000 + i;
+            db.write_decision(d).await.unwrap();
+        }
+        let recent = db
+            .query(LogQuery {
+                since_millis: Some(1_003),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // 1_003 and 1_004 match.
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn query_filters_by_tool_and_session() {
+        let db = Db::in_memory().await.unwrap();
+        let mut a = sample_new_decision();
+        a.tool_name = "Bash".into();
+        a.session_id = SessionId::new("S1");
+        let mut b = sample_new_decision();
+        b.tool_name = "Read".into();
+        b.session_id = SessionId::new("S2");
+        b.ts_millis += 1;
+        db.write_decision(a).await.unwrap();
+        db.write_decision(b).await.unwrap();
+
+        let bash = db
+            .query(LogQuery {
+                tool_name: Some("Bash".into()),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(bash.len(), 1);
+        assert_eq!(bash[0].tool_name, "Bash");
+
+        let s1 = db
+            .query(LogQuery {
+                session_id: Some("S1".into()),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s1[0].session_id.0, "S1");
+    }
+
+    #[tokio::test]
+    async fn query_grep_uses_fts5() {
+        let db = Db::in_memory().await.unwrap();
+        let mut a = sample_new_decision();
+        a.tool_input = json!({"command": "npm install some-package"});
+        let mut b = sample_new_decision();
+        b.tool_input = json!({"command": "git status"});
+        b.ts_millis += 1;
+        db.write_decision(a).await.unwrap();
+        db.write_decision(b).await.unwrap();
+
+        let hits = db
+            .query(LogQuery {
+                grep: Some("install".into()),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(
+            hits[0].tool_input.to_string().contains("npm install"),
+            "expected npm row; got {:?}",
+            hits[0].tool_input
+        );
+    }
+
+    #[tokio::test]
+    async fn query_ascending_returns_oldest_first() {
+        let db = Db::in_memory().await.unwrap();
+        for i in 0..3_i64 {
+            let mut d = sample_new_decision();
+            d.ts_millis = 1_000 + i;
+            db.write_decision(d).await.unwrap();
+        }
+        let rows = db
+            .query(LogQuery {
+                ascending: true,
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let ts: Vec<i64> = rows.iter().map(|r| r.ts_millis).collect();
+        assert_eq!(ts, vec![1_000, 1_001, 1_002]);
     }
 }
