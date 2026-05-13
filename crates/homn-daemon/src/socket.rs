@@ -2,16 +2,16 @@
 //!
 //! T013 deliverable: listens at `$XDG_RUNTIME_DIR/homn.sock`, accepts connections, reads JSON
 //! lines per [`hook-protocol.md`](../../../../specs/001-policy-engine/contracts/hook-protocol.md),
-//! and dispatches to a stub `ping` handler that returns `{"pong": true}`.
-//!
-//! Real method dispatch (decisions, policies, learning, surfaces) lands in T030 and after.
+//! and dispatches via [`crate::handler::dispatch`]. The dispatch function consults the policy
+//! engine and writes to the audit log; surface-mediated `Ask` is wired in T032/T033.
 
 use std::path::{Path, PathBuf};
 
 use homn_types::{ErrorObject, Request, Response};
-use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+
+use crate::handler::{dispatch, DaemonState};
 
 /// A bound, listening JSON-line RPC server.
 pub struct SocketServer {
@@ -24,8 +24,6 @@ impl SocketServer {
     pub async fn bind(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
         if path.exists() {
-            // Remove a stale socket from a previous run. Safe because Unix sockets are not
-            // file-locked while live.
             let _ = std::fs::remove_file(&path);
         }
         if let Some(parent) = path.parent() {
@@ -42,15 +40,14 @@ impl SocketServer {
         &self.path
     }
 
-    /// Accept connections forever, handling each with the built-in `ping` stub. Returns only on a
-    /// fatal accept error.
-    ///
-    /// Wraps each connection in its own Tokio task so slow clients don't block accept.
-    pub async fn serve_pings_forever(self) -> anyhow::Result<()> {
+    /// Accept connections forever, dispatching each line via [`dispatch`] against the given
+    /// [`DaemonState`]. Returns only on a fatal accept error.
+    pub async fn serve(self, state: DaemonState) -> anyhow::Result<()> {
         loop {
             let (stream, _addr) = self.listener.accept().await?;
+            let state = state.clone();
             tokio::spawn(async move {
-                if let Err(err) = handle_connection(stream).await {
+                if let Err(err) = handle_connection(stream, state).await {
                     tracing::warn!(error = %err, "connection error");
                 }
             });
@@ -64,14 +61,14 @@ impl Drop for SocketServer {
     }
 }
 
-async fn handle_connection(stream: UnixStream) -> anyhow::Result<()> {
+async fn handle_connection(stream: UnixStream, state: DaemonState) -> anyhow::Result<()> {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half).lines();
     while let Some(line) = reader.next_line().await? {
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_line(&line);
+        let response = handle_line(&line, &state).await;
         let mut s = serde_json::to_string(&response)?;
         s.push('\n');
         write_half.write_all(s.as_bytes()).await?;
@@ -80,8 +77,8 @@ async fn handle_connection(stream: UnixStream) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Public for testing — dispatches one JSON-line request to a stub handler.
-pub fn handle_line(line: &str) -> Response {
+/// Public for testing — dispatches one JSON-line request through the daemon state.
+pub async fn handle_line(line: &str, state: &DaemonState) -> Response {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(err) => {
@@ -91,26 +88,34 @@ pub fn handle_line(line: &str) -> Response {
             );
         }
     };
-
-    match req.method.as_str() {
-        "ping" => Response::ok(req.id, json!({"pong": true})),
-        other => Response::err(
-            req.id,
-            ErrorObject::new("unknown_method", format!("method `{other}` is not implemented yet")),
-        ),
-    }
+    dispatch(state, req).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handler::DaemonState;
+    use homn_audit::Db;
+    use homn_policy::{Engine, RuleSet};
     use serde_json::json;
+    use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    #[test]
-    fn ping_returns_pong() {
+    async fn empty_state() -> DaemonState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "default.rhai").unwrap();
+        DaemonState {
+            engine,
+            rules: Arc::new(rules),
+            audit: Arc::new(Db::in_memory().await.unwrap()),
+        }
+    }
+
+    #[tokio::test]
+    async fn ping_returns_pong() {
+        let state = empty_state().await;
         let req = json!({"id": "01H", "method": "ping", "params": {}}).to_string();
-        let resp = handle_line(&req);
+        let resp = handle_line(&req, &state).await;
         match resp {
             Response::Ok { id, result } => {
                 assert_eq!(id, "01H");
@@ -120,10 +125,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn unknown_method_returns_error() {
+    #[tokio::test]
+    async fn unknown_method_returns_error() {
+        let state = empty_state().await;
         let req = json!({"id": "02H", "method": "nope", "params": {}}).to_string();
-        let resp = handle_line(&req);
+        let resp = handle_line(&req, &state).await;
         match resp {
             Response::Err { id, error } => {
                 assert_eq!(id, "02H");
@@ -133,9 +139,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn invalid_frame_returns_error_with_empty_id() {
-        let resp = handle_line("not json");
+    #[tokio::test]
+    async fn invalid_frame_returns_error_with_empty_id() {
+        let state = empty_state().await;
+        let resp = handle_line("not json", &state).await;
         match resp {
             Response::Err { id, error } => {
                 assert_eq!(id, "");
@@ -152,11 +159,11 @@ mod tests {
 
         let server = SocketServer::bind(&sock_path).await.unwrap();
         let bound = server.path().to_path_buf();
+        let state = empty_state().await;
         tokio::spawn(async move {
-            let _ = server.serve_pings_forever().await;
+            let _ = server.serve(state).await;
         });
 
-        // Give the listener a moment to come up.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let mut stream = tokio::net::UnixStream::connect(&bound).await.unwrap();
