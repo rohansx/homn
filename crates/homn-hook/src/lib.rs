@@ -16,6 +16,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod install;
+
+pub use install::{default_settings_path, install_snippet, run_install, InstallReport};
+
 use std::path::Path;
 use std::time::Duration;
 

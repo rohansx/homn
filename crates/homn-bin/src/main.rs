@@ -181,6 +181,31 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
+        Some(Command::Install { apply }) => {
+            let settings_path = homn_hook::default_settings_path();
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            let report = homn_hook::run_install(&settings_path, apply, &mut lock)?;
+            match report {
+                homn_hook::InstallReport::Printed => {
+                    // Output already written by run_install.
+                }
+                homn_hook::InstallReport::CreatedNew { path } => {
+                    eprintln!("\nwrote new ~/.claude/settings.json with homn PermissionRequest hook");
+                    eprintln!("path: {}", path.display());
+                    eprintln!("next: start the daemon with `homn daemon` (and consider a systemd user unit)");
+                }
+                homn_hook::InstallReport::MergedExisting { path, backup } => {
+                    eprintln!("\nmerged homn PermissionRequest hook into existing settings.json");
+                    eprintln!("path:   {}", path.display());
+                    eprintln!("backup: {}", backup.display());
+                    eprintln!("next: start the daemon with `homn daemon`");
+                }
+                homn_hook::InstallReport::AlreadyPresent { path } => {
+                    eprintln!("\nhomn hook is already installed in {}; nothing to do", path.display());
+                }
+            }
+        }
         Some(Command::Hook { event }) => {
             // T029: read Claude Code hook payload from stdin, call the daemon, write the
             // expected hook-return JSON to stdout. Exit 0 ALWAYS so Claude falls back to its
