@@ -28,11 +28,7 @@ async fn spawn_daemon() -> (std::path::PathBuf, DaemonState, tempfile::TempDir) 
     let engine = Engine::new();
     let rules = RuleSet::parse(&engine, POLICY, "test.rhai").unwrap();
     let audit = Arc::new(Db::in_memory().await.unwrap());
-    let state = DaemonState {
-        engine,
-        rules: Arc::new(rules),
-        audit,
-    };
+    let state = DaemonState::with_static_rules(engine, rules, audit);
     let state_for_serve = state.clone();
 
     let server = SocketServer::bind(&sock_path).await.unwrap();

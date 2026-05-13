@@ -101,11 +101,8 @@ mod tests {
     async fn empty_state() -> DaemonState {
         let engine = Engine::new();
         let rules = RuleSet::parse(&engine, "", "default.rhai").unwrap();
-        DaemonState {
-            engine,
-            rules: Arc::new(rules),
-            audit: Arc::new(Db::in_memory().await.unwrap()),
-        }
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        DaemonState::with_static_rules(engine, rules, audit)
     }
 
     #[tokio::test]

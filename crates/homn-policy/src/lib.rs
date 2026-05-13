@@ -18,8 +18,10 @@ use homn_types::{Decision, RuleSourceLocation};
 use rhai::Engine as RhaiEngine;
 
 mod parse;
+pub mod watcher;
 
 pub use parse::{ParseError, RuleSet};
+pub use watcher::{spawn_reloader, Reloader, RuleSetHandle};
 
 /// The outcome of a single policy evaluation.
 #[derive(Debug, Clone, PartialEq)]

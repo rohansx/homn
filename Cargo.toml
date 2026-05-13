@@ -55,6 +55,8 @@ regex          = "1"
 humantime      = "2"
 chrono         = { version = "0.4", default-features = false, features = ["clock", "std"] }
 is-terminal    = "0.4"
+notify         = "8"
+arc-swap       = "1"
 
 [profile.release]
 opt-level     = 3

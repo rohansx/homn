@@ -7,8 +7,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use homn_audit::{Db, NewDecision};
-use homn_policy::{Engine, EvalRequest, Outcome, RuleSet};
+use homn_policy::{Engine, EvalRequest, Outcome, RuleSet, RuleSetHandle};
 use homn_types::{Decision, DecisionSource, ErrorObject, Request, Response, SessionId, Surface};
 use serde::Deserialize;
 use serde_json::json;
@@ -18,10 +19,23 @@ use serde_json::json;
 pub struct DaemonState {
     /// Policy engine (sandboxed Rhai with our custom helpers).
     pub engine: Engine,
-    /// Compiled ruleset. Hot-reload swaps this Arc atomically (T026; future).
-    pub rules: Arc<RuleSet>,
+    /// Compiled ruleset. Backed by `ArcSwap` so a watcher task (T026) can swap it atomically
+    /// from another thread without blocking the request hot path.
+    pub rules: RuleSetHandle,
     /// Audit DB handle.
     pub audit: Arc<Db>,
+}
+
+impl DaemonState {
+    /// Construct a DaemonState with a static (non-reloading) ruleset. Used in tests and as the
+    /// starting point in production before the watcher kicks in.
+    pub fn with_static_rules(engine: Engine, rules: RuleSet, audit: Arc<Db>) -> Self {
+        Self {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+        }
+    }
 }
 
 /// Parameters for `decisions.create`. Matches `specs/.../contracts/hook-protocol.md`.
@@ -66,7 +80,8 @@ async fn handle_decisions_create(state: &DaemonState, req: Request) -> Response 
 
     let started = Instant::now();
     let eval_req = EvalRequest::from_tool_call(&params.tool_name, &params.tool_input, &params.cwd);
-    let outcome: Outcome = state.engine.eval(&state.rules, &eval_req);
+    let rules = state.rules.load();
+    let outcome: Outcome = state.engine.eval(&rules, &eval_req);
     let latency_ms = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
 
     // For T030 we write deterministic decisions (Allow / Deny) and synthesized Ask straight
@@ -143,11 +158,7 @@ mod tests {
         let engine = Engine::new();
         let rules = RuleSet::parse(&engine, src, "default.rhai").unwrap();
         let audit = Arc::new(Db::in_memory().await.unwrap());
-        DaemonState {
-            engine,
-            rules: Arc::new(rules),
-            audit,
-        }
+        DaemonState::with_static_rules(engine, rules, audit)
     }
 
     fn dc_request(id: &str, tool: &str, tool_input: serde_json::Value) -> Request {
