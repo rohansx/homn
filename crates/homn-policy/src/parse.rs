@@ -159,13 +159,28 @@ impl RuleSet {
 }
 
 fn strip_comment(line: &str) -> &str {
-    // Strip a trailing `// …` comment but keep // appearing inside strings intact.
-    // For simplicity we don't try to handle quoted `//`; rules rarely contain that.
-    if let Some(pos) = line.find("//") {
-        &line[..pos]
-    } else {
-        line
+    // Strip a trailing `// …` comment, but keep `//` that appears inside a double-quoted
+    // string literal intact. Required because users embed `//` inside regex patterns and
+    // URLs — e.g. `url.regex("^https?://...")`.
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut escape = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if escape {
+            // Previous byte was a backslash inside a string — consume this byte literally.
+            escape = false;
+        } else if in_string && c == b'\\' {
+            escape = true;
+        } else if c == b'"' {
+            in_string = !in_string;
+        } else if !in_string && c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            return &line[..i];
+        }
+        i += 1;
     }
+    line
 }
 
 fn parse_rule(
@@ -281,6 +296,24 @@ mod tests {
             ParseError::BadExpression { line, .. } => assert_eq!(line, 1),
             other => panic!("expected BadExpression, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn comment_stripper_preserves_double_slash_inside_strings() {
+        // Regression: example.rhai had `url.regex("^https?://...")` which crashed the
+        // parser when strip_comment naively cut at the first `//`.
+        let eng = Engine::new();
+        let src = r#"ask if tool == "WebFetch" && url.regex("^https?://prod\\.");  // trailing comment"#;
+        let rs = RuleSet::parse(&eng, src, "t").expect("rule with // inside string must parse");
+        assert_eq!(rs.ask_rules().count(), 1);
+    }
+
+    #[test]
+    fn comment_stripper_handles_escaped_quotes() {
+        let eng = Engine::new();
+        let src = r#"allow if cmd.contains("she said \"//\" loudly");  // edge case"#;
+        let rs = RuleSet::parse(&eng, src, "t").expect("escaped quote inside string");
+        assert_eq!(rs.allow_rules().count(), 1);
     }
 
     #[test]

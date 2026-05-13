@@ -42,15 +42,37 @@ These are *open* research items. Each gets a yes/no answer before the correspond
 
 **Owner**: implementer of `homn-hook/src/lib.rs`.
 
-### R-004 — Rhai engine performance budget on real rules
+### R-004 — Rhai engine performance budget on real rules — **RESOLVED**
 
-**Question**: With ~50 rules in `default.rhai` (the example I've been sketching), what's the realistic p99 evaluation latency on commodity hardware (the author's CachyOS laptop, a M-series Mac, a cheap Linux VM)?
+**Question**: With ~50 rules in `default.rhai`, what's the realistic evaluation latency on commodity hardware?
 
-**Why it matters**: We've committed to ≤200 ms per call across all rules. If a realistic ruleset doesn't fit, we either raise budgets or pre-compile rules into a faster form.
+**Why it mattered**: We committed to ≤ 200 ms per call across all rules. If a realistic ruleset didn't fit, we'd either raise budgets or pre-compile rules.
 
-**Approach**: Microbenchmark a synthetic ruleset using `criterion`. Tune `set_max_operations` against measured ops-per-rule. ~2 hours.
+**Approach**: criterion benchmark against the shipped `policies/example.rhai` (~45 rules). See `crates/homn-policy/benches/eval.rs`.
 
-**Owner**: implementer of `homn-policy/`.
+**Result** (CachyOS, Ryzen 7 7840HS, 2026-05-13):
+
+| Scenario | Median | Notes |
+|---|---|---|
+| `early_deny`     | **2.1 µs**   | First rule (a deny) matches; near-best case. |
+| `mid_allow`      | **37 µs**    | Read inside HOME — matches an early allow after walking all denies. |
+| `worst_no_match` | **42 µs**    | WebFetch with no matching rule. Most Bash rules short-circuit on `tool == "Bash"`. |
+| `late_allow`     | **231 µs**   | `git push origin feat/*` — matches near the end of the allows, so the engine walks through many Bash-pattern rules' expensive globs. |
+| `parse_example_ruleset` | **92 µs** | One-time cost; happens on daemon start + each hot-reload. |
+
+**Headroom against the spec**:
+
+- Per-call budget commitment: ≤ 200 ms. Worst observed: 0.231 ms. **~870× under budget.**
+- Per-rule budget commitment: ≤ 50 ms. Worst per-rule (231 µs / ~45 rules): ~5 µs avg. **~10,000× under.**
+
+**Surprising finding**: the slowest case is *not* the "no match → fall through everything" case I expected — it's late-matching `Bash` rules where many earlier `Bash` rules have to run their regex/glob matchers before the right one fires. This means **tool-name discrimination is the cheap fast path; tool-input matching is expensive**. Two implications:
+
+1. Default ruleset ordering should put rules with the most-common tool prefix first (or with cheap exact-match `tool == X` predicates first).
+2. The 50ms `max_operations` cap is far higher than necessary; could safely tighten to 10ms or even 1ms with current ruleset complexity.
+
+**Decision**: leave the 50/200ms budgets as-is for v1 — gives headroom for pathological user-written rules without changing observable behaviour. Revisit if a real user reports a rule that exceeds the per-rule budget.
+
+**Owner**: closed by author 2026-05-13.
 
 ### R-005 — Anthropic on #19298
 
