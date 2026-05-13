@@ -132,6 +132,26 @@ async fn main() -> anyhow::Result<()> {
             );
             homn_daemon::run(config).await?;
         }
+        Some(Command::Hook { event }) => {
+            // T029: read Claude Code hook payload from stdin, call the daemon, write the
+            // expected hook-return JSON to stdout. Exit 0 ALWAYS so Claude falls back to its
+            // own prompt rather than failing the request — see contracts/hook-protocol.md.
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let mut buf = String::new();
+            use tokio::io::AsyncReadExt;
+            let _ = tokio::io::stdin().read_to_string(&mut buf).await;
+            let response = match event.as_str() {
+                "permission-request" => {
+                    homn_hook::handle_permission_request(&config.daemon.socket_path, &buf).await
+                }
+                other => {
+                    tracing::warn!(event = other, "hook event not yet handled; emitting empty response");
+                    serde_json::json!({})
+                }
+            };
+            println!("{}", serde_json::to_string(&response)?);
+        }
         Some(other) => {
             anyhow::bail!(
                 "subcommand `{other:?}` is not implemented yet — see specs/001-policy-engine/tasks.md"
