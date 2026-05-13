@@ -1,0 +1,39 @@
+# rust
+/target
+**/*.rs.bk
+Cargo.lock           # in libs we keep this; this is a bin crate, will revisit
+
+# node (tauri webview / chrome extension)
+node_modules
+dist
+.next
+.cache
+
+# tauri
+src-tauri/target
+src-tauri/Cargo.lock
+
+# data / state (runtime only — never commit)
+*.db
+*.db-shm
+*.db-wal
+.local/
+
+# logs
+*.log
+logs/
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# brainstorm artifacts from superpowers visual companion
+.superpowers/
+
+# secrets
+.env
+.env.*
+!.env.example
