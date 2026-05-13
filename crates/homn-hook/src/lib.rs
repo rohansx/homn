@@ -13,12 +13,15 @@
 //! socket missing, malformed payload, timeout), the hook writes `{"behavior": "ask"}` and lets
 //! Claude show its own interactive prompt. This is the "safe fallthrough" Constitution V demands.
 
-#![forbid(unsafe_code)]
+// Note: `pty` module needs `unsafe` for the TIOCGWINSZ ioctl call. We confine the unsafe to
+// that file and `#![forbid(unsafe_code)]` everywhere else via per-module attributes.
 #![warn(missing_docs)]
 
 pub mod install;
+pub mod pty;
 
 pub use install::{default_settings_path, install_snippet, run_install, InstallReport};
+pub use pty::{run_under_pty, PtyExit};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

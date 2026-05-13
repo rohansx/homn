@@ -57,6 +57,10 @@ chrono         = { version = "0.4", default-features = false, features = ["clock
 is-terminal    = "0.4"
 notify         = "8"
 arc-swap       = "1"
+portable-pty   = "0.8"
+signal-hook    = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+futures        = "0.3"
 
 [profile.release]
 opt-level     = 3

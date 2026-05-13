@@ -211,6 +211,18 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Some(Command::Run { command }) => {
+            // T053 slice A: transparent PTY wrapper. Decision-race + prompt detection
+            // land in slice B (T054/T055).
+            if command.is_empty() {
+                anyhow::bail!(
+                    "homn run requires a command to spawn (e.g. `homn run claude`)"
+                );
+            }
+            let result = tokio::task::spawn_blocking(move || homn_hook::run_under_pty(&command))
+                .await??;
+            std::process::exit(result.code);
+        }
         Some(Command::Hook { event }) => {
             // T029: read Claude Code hook payload from stdin, call the daemon, write the
             // expected hook-return JSON to stdout. Exit 0 ALWAYS so Claude falls back to its
