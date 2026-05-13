@@ -1,0 +1,15 @@
+[package]
+name = "homn-policy"
+description = "Rhai-based policy engine for homn: deny → ask → allow evaluation with wall-clock budgets."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[dependencies]
+homn-types  = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }

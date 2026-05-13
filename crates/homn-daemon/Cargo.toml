@@ -1,0 +1,31 @@
+[package]
+name = "homn-daemon"
+description = "The long-running homn process: event bus, policy dispatch, audit writes, MCP host."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[dependencies]
+homn-types     = { workspace = true }
+homn-policy    = { workspace = true }
+homn-audit     = { workspace = true }
+homn-hook      = { workspace = true }
+homn-tui       = { workspace = true }
+homn-mcp       = { workspace = true }
+homn-learning  = { workspace = true }
+
+tokio          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+anyhow         = { workspace = true }
+tracing        = { workspace = true }
+tracing-subscriber = { workspace = true }
+toml           = { workspace = true }
+
+[dev-dependencies]
+tempfile       = "3"

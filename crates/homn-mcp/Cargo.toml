@@ -1,0 +1,15 @@
+[package]
+name = "homn-mcp"
+description = "MCP server exposing query_policy, explain_decision, suggest_rule, recent_decisions."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[dependencies]
+homn-types  = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }

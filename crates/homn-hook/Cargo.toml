@@ -1,0 +1,15 @@
+[package]
+name = "homn-hook"
+description = "Claude Code hook integration + PTY-tap wrapper for homn."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[dependencies]
+homn-types  = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }

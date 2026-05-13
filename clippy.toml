@@ -1,0 +1,3 @@
+# Conservative clippy thresholds; CI runs with -D warnings so anything triggered fails the build.
+msrv = "1.83"
+avoid-breaking-exported-api = true

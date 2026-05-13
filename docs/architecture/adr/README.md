@@ -12,6 +12,7 @@
 | 0004  | [Tauri over egui for the face](0004-tauri-vs-egui.md) | accepted   |
 | 0005  | [`ctxgraph` stays a separate repo](0005-ctxgraph-separate.md) | accepted   |
 | 0006  | [Expose `homn` as an MCP server](0006-mcp-server.md) | accepted   |
+| 0007  | [Integrate GitHub Spec Kit alongside docs/](0007-spec-kit-integration.md) | accepted   |
 
 ## Conventions
 

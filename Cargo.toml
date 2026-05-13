@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/homn-bin",
+    "crates/homn-daemon",
+    "crates/homn-policy",
+    "crates/homn-audit",
+    "crates/homn-hook",
+    "crates/homn-tui",
+    "crates/homn-mcp",
+    "crates/homn-learning",
+    "crates/homn-types",
+]
+
+[workspace.package]
+version       = "0.1.0"
+edition       = "2021"
+rust-version  = "1.83"
+authors       = ["Rohan Sharma <hello@rohan.sh>"]
+license       = "Apache-2.0"
+repository    = "https://github.com/rohansx/homn"
+homepage      = "https://github.com/rohansx/homn"
+description   = "Local-first policy daemon, ASCII face, and context graph for coding agents."
+readme        = "../../README.md"
+keywords      = ["claude-code", "polkit", "policy", "agent", "developer-tools"]
+categories    = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+# Shared crate paths
+homn-types     = { path = "crates/homn-types", version = "0.1.0" }
+homn-policy    = { path = "crates/homn-policy", version = "0.1.0" }
+homn-audit     = { path = "crates/homn-audit", version = "0.1.0" }
+homn-hook      = { path = "crates/homn-hook", version = "0.1.0" }
+homn-tui       = { path = "crates/homn-tui", version = "0.1.0" }
+homn-mcp       = { path = "crates/homn-mcp", version = "0.1.0" }
+homn-learning  = { path = "crates/homn-learning", version = "0.1.0" }
+homn-daemon    = { path = "crates/homn-daemon", version = "0.1.0" }
+
+# Common ecosystem deps
+tokio          = { version = "1", features = ["full"] }
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+clap           = { version = "4", features = ["derive", "env"] }
+thiserror      = "2"
+anyhow         = "1"
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml           = "0.8"
+rusqlite       = { version = "0.32", features = ["bundled"] }
+tokio-rusqlite = "0.6"
+async-trait    = "0.1"
+ulid           = "1"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"

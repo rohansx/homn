@@ -1,7 +1,7 @@
 # rust
 /target
 **/*.rs.bk
-Cargo.lock           # in libs we keep this; this is a bin crate, will revisit
+# Cargo.lock is COMMITTED — homn is a binary project, reproducible builds matter
 
 # node (tauri webview / chrome extension)
 node_modules
@@ -32,6 +32,14 @@ Thumbs.db
 
 # brainstorm artifacts from superpowers visual companion
 .superpowers/
+
+# claude / spec-kit project state — agent folders can hold credentials
+# per spec-kit's security warning; commit policy files explicitly, ignore the rest
+.claude/settings.local.json
+.claude/.credentials*
+
+# spec-kit local workflow artifacts (commit specs + templates, ignore caches)
+.specify/cache/
 
 # secrets
 .env

@@ -1,0 +1,24 @@
+[package]
+name = "homn-bin"
+description = "The homn binary: subcommand dispatch for daemon, install, log, rule, learning, run, mcp."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[[bin]]
+name = "homn"
+path = "src/main.rs"
+
+[dependencies]
+homn-daemon   = { workspace = true }
+homn-types    = { workspace = true }
+
+clap          = { workspace = true }
+tokio         = { workspace = true }
+anyhow        = { workspace = true }
+tracing       = { workspace = true }
+tracing-subscriber = { workspace = true }
