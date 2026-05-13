@@ -32,7 +32,6 @@ pub struct Config {
     pub mcp: McpSection,
 }
 
-
 /// `[daemon]` — socket paths, shutdown grace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

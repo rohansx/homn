@@ -127,7 +127,10 @@ mod tests {
 
     #[test]
     fn decision_serializes_as_snake_case() {
-        assert_eq!(serde_json::to_string(&Decision::Allow).unwrap(), "\"allow\"");
+        assert_eq!(
+            serde_json::to_string(&Decision::Allow).unwrap(),
+            "\"allow\""
+        );
         assert_eq!(serde_json::to_string(&Decision::Deny).unwrap(), "\"deny\"");
         assert_eq!(serde_json::to_string(&Decision::Ask).unwrap(), "\"ask\"");
     }
@@ -189,7 +192,9 @@ mod tests {
                 file: PathBuf::from("default.rhai"),
                 line: 10,
             }),
-            rule_text: Some("deny if tool == \"Bash\" && cmd.matches(\"git push * main\")".to_owned()),
+            rule_text: Some(
+                "deny if tool == \"Bash\" && cmd.matches(\"git push * main\")".to_owned(),
+            ),
             ctxgraph_hit: None,
             latency_ms: 47,
             surface: Some(Surface::HookDirect),

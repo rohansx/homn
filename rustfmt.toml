@@ -2,6 +2,10 @@ edition = "2021"
 max_width = 100
 use_field_init_shorthand = true
 use_try_shorthand = true
-imports_granularity = "Crate"
-group_imports = "StdExternalCrate"
 newline_style = "Unix"
+
+# Note: `imports_granularity` and `group_imports` are nightly-only rustfmt features. We rely on
+# stable in CI (see .github/workflows/ci.yml) so they're commented out. Run a nightly fmt locally
+# if you want the consistent import shape.
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"

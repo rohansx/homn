@@ -169,7 +169,8 @@ mod tests {
         let ev = BusEvent::LearningSuggestion {
             id: 99,
             pattern_repr: "Bash: git push origin feat/*".into(),
-            proposed_rule: "allow if tool == \"Bash\" && cmd.matches(\"git push origin feat/*\")".into(),
+            proposed_rule: "allow if tool == \"Bash\" && cmd.matches(\"git push origin feat/*\")"
+                .into(),
             observation_count: 5,
         };
         let s = serde_json::to_string(&ev).unwrap();

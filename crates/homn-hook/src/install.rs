@@ -97,7 +97,10 @@ pub fn run_install(
         if let Some(parent) = settings_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(settings_path, serde_json::to_string_pretty(&install_snippet())?)?;
+        std::fs::write(
+            settings_path,
+            serde_json::to_string_pretty(&install_snippet())?,
+        )?;
         return Ok(InstallReport::CreatedNew {
             path: settings_path.to_path_buf(),
         });
@@ -148,7 +151,9 @@ pub fn merge_install_snippet(settings: &mut Value) {
         }
     };
 
-    let hooks = obj.entry("hooks").or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let hooks = obj
+        .entry("hooks")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
     if !hooks.is_object() {
         *hooks = Value::Object(serde_json::Map::new());
     }
@@ -242,7 +247,10 @@ mod tests {
         let arr = v["hooks"]["PermissionRequest"].as_array().unwrap();
         assert_eq!(arr.len(), 2, "should append, not replace");
         assert_eq!(arr[0]["hooks"][0]["command"], "someone-elses-hook");
-        assert_eq!(arr[1]["hooks"][0]["command"], "homn hook permission-request");
+        assert_eq!(
+            arr[1]["hooks"][0]["command"],
+            "homn hook permission-request"
+        );
     }
 
     #[test]
@@ -252,7 +260,11 @@ mod tests {
         merge_install_snippet(&mut v);
         merge_install_snippet(&mut v);
         let arr = v["hooks"]["PermissionRequest"].as_array().unwrap();
-        assert_eq!(arr.len(), 1, "expected exactly one homn entry after 3 merges");
+        assert_eq!(
+            arr.len(),
+            1,
+            "expected exactly one homn entry after 3 merges"
+        );
     }
 
     #[test]
@@ -272,7 +284,8 @@ mod tests {
         let mut out = Cursor::new(Vec::<u8>::new());
         let report = run_install(&path, true, &mut out).unwrap();
         assert_eq!(report, InstallReport::CreatedNew { path: path.clone() });
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(is_homn_entry_present(&written));
     }
 

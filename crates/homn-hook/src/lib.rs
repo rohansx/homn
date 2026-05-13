@@ -70,10 +70,7 @@ struct HookPayload {
 
 /// Handle a `PermissionRequest` hook end-to-end: parse stdin, call the daemon, return the wire
 /// response. Errors produce the safe-fallthrough response, NOT a hook failure.
-pub async fn handle_permission_request(
-    socket_path: impl AsRef<Path>,
-    stdin_json: &str,
-) -> Value {
+pub async fn handle_permission_request(socket_path: impl AsRef<Path>, stdin_json: &str) -> Value {
     match handle_permission_request_inner(socket_path.as_ref(), stdin_json).await {
         Ok(value) => value,
         Err(err) => {
@@ -154,14 +151,20 @@ mod tests {
     #[test]
     fn safe_fallthrough_has_required_shape() {
         let v = safe_fallthrough_response();
-        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
+        assert_eq!(
+            v["hookSpecificOutput"]["hookEventName"],
+            "PermissionRequest"
+        );
         assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "ask");
     }
 
     #[test]
     fn permission_request_response_shape() {
         let v = permission_request_response("deny");
-        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
+        assert_eq!(
+            v["hookSpecificOutput"]["hookEventName"],
+            "PermissionRequest"
+        );
         assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "deny");
     }
 

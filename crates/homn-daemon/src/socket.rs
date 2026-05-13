@@ -82,10 +82,7 @@ pub async fn handle_line(line: &str, state: &DaemonState) -> Response {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(err) => {
-            return Response::err(
-                "",
-                ErrorObject::new("invalid_frame", err.to_string()),
-            );
+            return Response::err("", ErrorObject::new("invalid_frame", err.to_string()));
         }
     };
     dispatch(state, req).await

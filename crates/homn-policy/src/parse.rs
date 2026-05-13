@@ -178,11 +178,13 @@ fn parse_rule(
     let trimmed = line.trim_end_matches(';').trim();
 
     // Split into "<verb> if <expr>".
-    let (verb_word, rest) = trimmed.split_once(' ').ok_or_else(|| ParseError::Malformed {
-        file: file_name.to_owned(),
-        line: line_no,
-        message: "expected '<verb> if <expression>'".to_owned(),
-    })?;
+    let (verb_word, rest) = trimmed
+        .split_once(' ')
+        .ok_or_else(|| ParseError::Malformed {
+            file: file_name.to_owned(),
+            line: line_no,
+            message: "expected '<verb> if <expression>'".to_owned(),
+        })?;
 
     let verb = match verb_word {
         "allow" => Verb::Allow,
@@ -198,11 +200,13 @@ fn parse_rule(
     };
 
     let rest = rest.trim_start();
-    let expr = rest.strip_prefix("if").ok_or_else(|| ParseError::Malformed {
-        file: file_name.to_owned(),
-        line: line_no,
-        message: "expected `if` after verb".to_owned(),
-    })?;
+    let expr = rest
+        .strip_prefix("if")
+        .ok_or_else(|| ParseError::Malformed {
+            file: file_name.to_owned(),
+            line: line_no,
+            message: "expected `if` after verb".to_owned(),
+        })?;
     let expr = expr.trim();
     if expr.is_empty() {
         return Err(ParseError::Malformed {

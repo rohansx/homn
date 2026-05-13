@@ -171,7 +171,8 @@ impl Db {
 
         // FTS5-backed --grep first (intersect via subquery for efficiency).
         if let Some(grep) = q.grep.clone() {
-            where_clauses.push("id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH ?)");
+            where_clauses
+                .push("id IN (SELECT rowid FROM decisions_fts WHERE decisions_fts MATCH ?)");
             params.push(Box::new(grep));
         }
         if let Some(since) = q.since_millis {
@@ -214,8 +215,10 @@ impl Db {
             .conn
             .call(move |c| {
                 let mut stmt = c.prepare(&sql)?;
-                let param_refs: Vec<&dyn rusqlite::ToSql> =
-                    params.iter().map(|p| p.as_ref() as &dyn rusqlite::ToSql).collect();
+                let param_refs: Vec<&dyn rusqlite::ToSql> = params
+                    .iter()
+                    .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                    .collect();
                 let rows = stmt
                     .query_map(param_refs.as_slice(), |r| {
                         Ok(SerializedRow {
@@ -582,7 +585,10 @@ mod tests {
                 Ok(())
             })
             .await;
-        assert!(err.is_err(), "expected CHECK constraint to reject bad decision value");
+        assert!(
+            err.is_err(),
+            "expected CHECK constraint to reject bad decision value"
+        );
     }
 
     #[tokio::test]

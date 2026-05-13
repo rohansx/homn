@@ -205,17 +205,19 @@ impl Default for Engine {
 
 /// Register our custom helpers on a Rhai engine: `matches` (glob) and `regex` (RE2-flavoured).
 fn register_helpers(engine: &mut RhaiEngine) {
-    engine.register_fn("matches", |s: &str, pattern: &str| {
-        glob_match(s, pattern)
-    });
+    engine.register_fn("matches", |s: &str, pattern: &str| glob_match(s, pattern));
     engine.register_fn("matches", |s: String, pattern: &str| {
         glob_match(&s, pattern)
     });
     engine.register_fn("regex", |s: &str, pattern: &str| -> bool {
-        regex::Regex::new(pattern).map(|r| r.is_match(s)).unwrap_or(false)
+        regex::Regex::new(pattern)
+            .map(|r| r.is_match(s))
+            .unwrap_or(false)
     });
     engine.register_fn("regex", |s: String, pattern: &str| -> bool {
-        regex::Regex::new(pattern).map(|r| r.is_match(&s)).unwrap_or(false)
+        regex::Regex::new(pattern)
+            .map(|r| r.is_match(&s))
+            .unwrap_or(false)
     });
 }
 
@@ -339,7 +341,10 @@ mod tests {
     #[test]
     fn matches_helper_works_inside_rules() {
         let eng = Engine::new();
-        let rs = ruleset(&eng, r#"allow if tool == "Bash" && cmd.matches("npm run *");"#);
+        let rs = ruleset(
+            &eng,
+            r#"allow if tool == "Bash" && cmd.matches("npm run *");"#,
+        );
         let out = eng.eval(&rs, &req("Bash", "npm run build"));
         assert_eq!(out.decision, Decision::Allow);
     }

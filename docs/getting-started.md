@@ -104,7 +104,21 @@ INFO homn_daemon: opening audit DB path=/home/you/.local/share/homn/audit.db
 INFO homn_daemon: homn daemon listening socket=/run/user/1000/homn.sock
 ```
 
-A systemd user unit is in T081 (next polish slice). For now, run it in a `tmux` pane or as `nohup homn daemon &`.
+### As a systemd user service (Linux)
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp dist/homn.service ~/.config/systemd/user/homn.service
+sed -i "s|%h/.cargo/bin/homn|$(which homn)|" ~/.config/systemd/user/homn.service
+systemctl --user daemon-reload
+systemctl --user enable --now homn
+systemctl --user status homn
+```
+
+See [`dist/README.md`](../dist/README.md) for the full unit explanation (resource limits,
+network sandboxing, filesystem allowlist).
+
+macOS launchd plist coming in a future polish slice.
 
 ## Step 5 — Use Claude normally
 

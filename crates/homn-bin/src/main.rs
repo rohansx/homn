@@ -191,7 +191,9 @@ async fn main() -> anyhow::Result<()> {
                     // Output already written by run_install.
                 }
                 homn_hook::InstallReport::CreatedNew { path } => {
-                    eprintln!("\nwrote new ~/.claude/settings.json with homn PermissionRequest hook");
+                    eprintln!(
+                        "\nwrote new ~/.claude/settings.json with homn PermissionRequest hook"
+                    );
                     eprintln!("path: {}", path.display());
                     eprintln!("next: start the daemon with `homn daemon` (and consider a systemd user unit)");
                 }
@@ -202,7 +204,10 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("next: start the daemon with `homn daemon`");
                 }
                 homn_hook::InstallReport::AlreadyPresent { path } => {
-                    eprintln!("\nhomn hook is already installed in {}; nothing to do", path.display());
+                    eprintln!(
+                        "\nhomn hook is already installed in {}; nothing to do",
+                        path.display()
+                    );
                 }
             }
         }
@@ -220,7 +225,10 @@ async fn main() -> anyhow::Result<()> {
                     homn_hook::handle_permission_request(&config.daemon.socket_path, &buf).await
                 }
                 other => {
-                    tracing::warn!(event = other, "hook event not yet handled; emitting empty response");
+                    tracing::warn!(
+                        event = other,
+                        "hook event not yet handled; emitting empty response"
+                    );
                     serde_json::json!({})
                 }
             };
@@ -329,8 +337,8 @@ async fn log_command(args: LogArgs) -> anyhow::Result<()> {
 
 /// Parse `"1h"`, `"30m"`, `"7d"` → unix-epoch-millis at `now - that duration`.
 fn parse_duration_to_past_millis(s: &str) -> anyhow::Result<i64> {
-    let dur = humantime::parse_duration(s)
-        .map_err(|e| anyhow::anyhow!("invalid duration `{s}`: {e}"))?;
+    let dur =
+        humantime::parse_duration(s).map_err(|e| anyhow::anyhow!("invalid duration `{s}`: {e}"))?;
     let now = chrono::Utc::now();
     let past = now - chrono::Duration::from_std(dur).unwrap_or_else(|_| chrono::Duration::zero());
     Ok(past.timestamp_millis())

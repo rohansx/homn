@@ -166,9 +166,6 @@ mod tests {
     #[test]
     fn response_id_accessor() {
         assert_eq!(Response::ok("a", json!(null)).id(), "a");
-        assert_eq!(
-            Response::err("b", ErrorObject::new("x", "y")).id(),
-            "b"
-        );
+        assert_eq!(Response::err("b", ErrorObject::new("x", "y")).id(), "b");
     }
 }

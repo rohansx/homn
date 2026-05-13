@@ -9,9 +9,7 @@ use std::time::Instant;
 
 use homn_audit::{Db, NewDecision};
 use homn_policy::{Engine, EvalRequest, Outcome, RuleSet};
-use homn_types::{
-    Decision, DecisionSource, ErrorObject, Request, Response, SessionId, Surface,
-};
+use homn_types::{Decision, DecisionSource, ErrorObject, Request, Response, SessionId, Surface};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -62,10 +60,7 @@ async fn handle_decisions_create(state: &DaemonState, req: Request) -> Response 
     let params: CreateDecisionParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(err) => {
-            return Response::err(
-                req.id,
-                ErrorObject::new("invalid_params", err.to_string()),
-            );
+            return Response::err(req.id, ErrorObject::new("invalid_params", err.to_string()));
         }
     };
 
@@ -171,10 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn deny_rule_path_writes_audit_row() {
-        let state = state_with_rules(
-            r#"deny if tool == "Bash" && cmd.contains("rm -rf");"#,
-        )
-        .await;
+        let state = state_with_rules(r#"deny if tool == "Bash" && cmd.contains("rm -rf");"#).await;
         let resp = dispatch(
             &state,
             dc_request("a", "Bash", json!({"command": "rm -rf ~/x"})),
@@ -214,7 +206,11 @@ mod tests {
     #[tokio::test]
     async fn unmatched_request_falls_through_to_ask() {
         let state = state_with_rules(r#"allow if tool == "Read";"#).await;
-        let resp = dispatch(&state, dc_request("c", "WebFetch", json!({"url": "https://x"}))).await;
+        let resp = dispatch(
+            &state,
+            dc_request("c", "WebFetch", json!({"url": "https://x"})),
+        )
+        .await;
         match resp {
             Response::Ok { result, .. } => {
                 assert_eq!(result["decision"], "ask");
