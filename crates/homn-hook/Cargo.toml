@@ -12,6 +12,7 @@ homepage.workspace     = true
 [dependencies]
 homn-types         = { workspace = true }
 homn-tui           = { workspace = true }
+homn-audit         = { workspace = true }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
 tokio              = { workspace = true }

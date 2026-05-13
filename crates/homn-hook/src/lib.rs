@@ -21,7 +21,7 @@ pub mod install;
 pub mod pty;
 
 pub use install::{default_settings_path, install_snippet, run_install, InstallReport};
-pub use pty::{run_under_pty, PtyExit};
+pub use pty::{run_under_pty, PtyConfig, PtyExit};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

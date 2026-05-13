@@ -608,6 +608,7 @@ dependencies = [
  "homn-types",
  "humantime",
  "is-terminal",
+ "regex",
  "serde_json",
  "tokio",
  "tracing",
@@ -643,6 +644,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
+ "homn-audit",
  "homn-tui",
  "homn-types",
  "portable-pty",

@@ -272,6 +272,24 @@ impl Db {
     }
 }
 
+/// Open a synchronous (non-Tokio) connection and return `true` if any `deny` decision was
+/// recorded in the last `within_secs` seconds. Used by the PTY-wrapper (T055) which can't
+/// participate in the daemon's Tokio runtime.
+pub fn has_recent_deny_sync(audit_path: &Path, within_secs: u64) -> anyhow::Result<bool> {
+    let conn = rusqlite::Connection::open(audit_path)?;
+    let now_ms: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let cutoff = now_ms - (within_secs as i64) * 1000;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM decisions WHERE decision = 'deny' AND ts >= ?",
+        [cutoff],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 /// Filter set for [`Db::query`]. All set fields AND together; unset fields match all rows.
 #[derive(Debug, Default, Clone)]
 pub struct LogQuery {
@@ -829,6 +847,48 @@ mod tests {
             "expected npm row; got {:?}",
             hits[0].tool_input
         );
+    }
+
+    #[tokio::test]
+    async fn has_recent_deny_sync_returns_true_after_recent_deny() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.db");
+        {
+            let db = Db::open(&path).await.unwrap();
+            db.write_decision(sample_new_decision()).await.unwrap();
+        }
+        // sample_new_decision has decision=Deny and ts in the recent past relative to "now",
+        // but its ts is hard-coded. So we use a generous window.
+        let result = has_recent_deny_sync(&path, 60 * 60 * 24 * 365 * 100).unwrap();
+        assert!(result, "expected to find the recent deny row");
+    }
+
+    #[tokio::test]
+    async fn has_recent_deny_sync_returns_false_when_no_recent_deny() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.db");
+        let db = Db::open(&path).await.unwrap();
+        let mut allow = sample_new_decision();
+        allow.decision = Decision::Allow;
+        db.write_decision(allow).await.unwrap();
+        drop(db);
+        // Only an allow was recorded, even with a wide window.
+        let result = has_recent_deny_sync(&path, 60 * 60 * 24 * 365 * 100).unwrap();
+        assert!(!result, "expected no deny");
+    }
+
+    #[tokio::test]
+    async fn has_recent_deny_sync_respects_time_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.db");
+        {
+            let db = Db::open(&path).await.unwrap();
+            // sample_new_decision().ts_millis is 1_715_000_000_000 — way in the past from
+            // the actual "now" of the test run. So a 60-second window should NOT include it.
+            db.write_decision(sample_new_decision()).await.unwrap();
+        }
+        let result = has_recent_deny_sync(&path, 60).unwrap();
+        assert!(!result, "old deny should be outside a 60s window");
     }
 
     #[tokio::test]

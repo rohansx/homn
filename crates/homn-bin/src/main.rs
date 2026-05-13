@@ -212,15 +212,23 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(Command::Run { command }) => {
-            // T053 slice A: transparent PTY wrapper. Decision-race + prompt detection
-            // land in slice B (T054/T055).
+            // US3 slice B: PTY wrapper with deny enforcement (T054/T055).
             if command.is_empty() {
-                anyhow::bail!(
-                    "homn run requires a command to spawn (e.g. `homn run claude`)"
-                );
+                anyhow::bail!("homn run requires a command to spawn (e.g. `homn run claude`)");
             }
-            let result = tokio::task::spawn_blocking(move || homn_hook::run_under_pty(&command))
-                .await??;
+            let config_path = homn_daemon::config::default_config_path();
+            let daemon_config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let prompt_regex = regex::Regex::new(&daemon_config.pty_wrapper.prompt_regex)
+                .map_err(|e| anyhow::anyhow!("invalid pty_wrapper.prompt_regex: {e}"))?;
+            let pty_config = homn_hook::PtyConfig {
+                prompt_regex,
+                audit_path: daemon_config.audit.db_path.clone(),
+                deny_lookback_secs: 5,
+                gating_enabled: daemon_config.pty_wrapper.enabled,
+            };
+            let result =
+                tokio::task::spawn_blocking(move || homn_hook::run_under_pty(&command, pty_config))
+                    .await??;
             std::process::exit(result.code);
         }
         Some(Command::Hook { event }) => {
