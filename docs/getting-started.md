@@ -2,16 +2,17 @@
 
 > 5-minute walkthrough. Targets: Linux + macOS. Windows comes later.
 
-## What works today (v0 alpha)
+## What works today
 
-- **Deterministic deny** via Claude Code's `PermissionRequest` hook. When a rule in your policy file matches with verb `deny`, the daemon returns `{"behavior": "deny"}` and Claude does not run the call.
-- **Audit log**: every decision (allow / deny / ask) lands in SQLite with the rule that fired and the latency. Queryable via `homn log`.
-- **Hot path**: rule eval ≤50 ms p95 on a starter ruleset; audit write off the hot path.
+- **Deterministic deny** via Claude Code's `PermissionRequest` hook + the **`homn run claude`** PTY wrapper (which enforces deny even with upstream bug [#19298](https://github.com/anthropics/claude-code/issues/19298) by synthesizing `n\n` into the prompt when the audit log shows a recent deny).
+- **Interactive ask path**: when a rule says `ask`, the hook opens an inline TUI prompt on `/dev/tty` with the tool, input preview, rule citation, and `a`/`d`/`A`/`D` hotkeys.
+- **Audit log**: every decision (allow / deny / ask) lands in SQLite with the rule that fired and the latency. Queryable via `homn log` with filters.
+- **Hot-reload**: editing `~/.config/homn/policies/default.rhai` is picked up within ~50ms without restarting the daemon. A syntactically broken edit keeps the previous ruleset active.
+- **MCP server** (`homn mcp stdio`): the agent itself can query `query_policy`, `explain_decision`, `recent_decisions` — the novelty of this whole project.
 
-## What doesn't work yet (deferred to later phases)
+## What doesn't work yet
 
-- **TUI `ask` round-trip** (T031–T033): if a rule says `ask`, the daemon currently returns `ask` to Claude, which then shows its own interactive prompt. The dedicated TUI prompt that blocks on the daemon side lands in the next slice.
-- **PTY-tap wrapper** (T053–T057): `homn run claude` will guarantee deny even if Anthropic upstream bug [#19298](https://github.com/anthropics/claude-code/issues/19298) is still affecting your version of Claude Code. Right now the hook return is best-effort for deny.
+- **Learning subsystem** (T060–T068): after 5 consistent same-answer asks, `homn` will suggest promoting to a rule. Not built yet.
 - **The face** (Phase 2): the always-on-top ASCII window. Default OFF anyway.
 - **`ctxgraph` integration** (Phase 3): session resumption, open-loop nudges, context-aware policy rules.
 
@@ -158,12 +159,53 @@ Colors render when stdout is a TTY; piping gives clean output.
 
 ## Step 7 — Iterate your policy
 
-Edit `~/.config/homn/policies/default.rhai` and **restart the daemon** to pick up changes. Hot reload via inotify is T026 — coming soon.
+Just edit the file. The daemon picks up changes via `inotify` within ~50 ms; no restart needed.
 
 ```sh
 $EDITOR ~/.config/homn/policies/default.rhai
-# Ctrl-C the daemon, restart it
+# That's it — the daemon log will show `policy hot-reloaded deny=3 ask=4 allow=12` or similar.
 ```
+
+A syntactically broken edit (e.g. unterminated string) is logged as a warning; the previously-loaded ruleset stays active until you fix it. You'll never accidentally empty out your policy.
+
+## Step 7b (optional) — Let Claude query its own constraints via MCP
+
+This is the novel part. Configure `~/.claude.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "homn": {
+      "command": "homn",
+      "args": ["mcp", "stdio"]
+    }
+  }
+}
+```
+
+Now Claude has three new tools available:
+
+- **`query_policy`** — dry-run a tool call against your rules. Use `before` attempting an action you suspect may be denied. Returns the decision + rule that would fire. Doesn't log to audit.
+- **`explain_decision`** — look up `decision_id N` and see the rule that fired. Use after a deny so you can propose an alternative.
+- **`recent_decisions`** — tail the audit. Filterable by tool, decision, FTS-search.
+
+Test it:
+
+```
+You: "What would happen if you tried `rm -rf ~/Documents`?"
+Claude: (calls query_policy) "Your policy would deny this — rule default.rhai:2 says 
+        `deny if tool == \"Bash\" && cmd.contains(\"rm -rf\")`. Want me to use trash-cli instead?"
+```
+
+## Step 7c (optional) — Use the PTY-tap wrapper
+
+The daemon's deny return through the hook is best-effort because of Anthropic bug [#19298](https://github.com/anthropics/claude-code/issues/19298) — Claude may still show the prompt. `homn run claude` wraps Claude in a PTY and synthesizes `n\n` into the prompt when the audit shows a recent deny.
+
+```sh
+homn run claude                        # use this instead of plain `claude`
+```
+
+Tradeoff: harder-to-debug terminal multiplexing. Worth it if you care about hard-deny semantics.
 
 ## Step 8 — Uninstall
 

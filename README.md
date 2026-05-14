@@ -46,6 +46,27 @@ homn log --denied
 homn log --grep "rm -rf" --json | jq
 ```
 
+## optional: wire homn as an MCP server
+
+This is the novel piece that no other Claude-Code policy tool has. Once configured, Claude can call `query_policy` *before* attempting an action — *"would my rules allow rm -rf here?"* — and adjust its plan accordingly. Add to `~/.claude.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "homn": {
+      "command": "homn",
+      "args": ["mcp", "stdio"]
+    }
+  }
+}
+```
+
+Three tools become available:
+
+- **`query_policy(tool, tool_input, cwd)`** — dry-run evaluation. Returns the decision the engine *would* make, the rule that would fire, and the rule's source location. **Doesn't log to audit, doesn't mutate state.**
+- **`explain_decision(decision_id)`** — look up an audit row by id; useful for understanding why a prior call was denied so the agent can propose an alternative.
+- **`recent_decisions(limit, decision, tool, grep)`** — tail the audit log; the agent can ask *"what was just denied?"* before re-attempting.
+
 ## quick links
 
 - [Product overview](docs/product/overview.md) — what we're building and why
