@@ -79,12 +79,27 @@ pub async fn build_state_with_reloader(
     };
 
     let audit = open_audit(config).await?;
+    let learning = open_learning(config).await.ok();
     let state = DaemonState {
         engine,
         rules: rules_handle,
         audit,
+        learning,
     };
     Ok((state, reloader))
+}
+
+/// Open the learning DB. Errors are logged but not fatal — learning is opportunistic.
+async fn open_learning(config: &Config) -> anyhow::Result<Arc<homn_learning::Db>> {
+    if let Some(parent) = config.learning.db_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    tracing::info!(path = %config.learning.db_path.display(), "opening learning DB");
+    Ok(Arc::new(
+        homn_learning::Db::open(&config.learning.db_path).await?,
+    ))
 }
 
 /// Run the daemon to completion using the given config.

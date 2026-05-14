@@ -20,6 +20,7 @@ homn-hook     = { workspace = true }
 homn-audit    = { workspace = true }
 homn-mcp      = { workspace = true }
 homn-policy   = { workspace = true }
+homn-learning = { workspace = true }
 regex         = { workspace = true }
 arc-swap      = { workspace = true }
 

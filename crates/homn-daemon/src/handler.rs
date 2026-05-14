@@ -24,16 +24,19 @@ pub struct DaemonState {
     pub rules: RuleSetHandle,
     /// Audit DB handle.
     pub audit: Arc<Db>,
+    /// Learning DB (US4). When present, every ask-resolution feeds the suggestion detector.
+    pub learning: Option<Arc<homn_learning::Db>>,
 }
 
 impl DaemonState {
-    /// Construct a DaemonState with a static (non-reloading) ruleset. Used in tests and as the
-    /// starting point in production before the watcher kicks in.
+    /// Construct a DaemonState with a static (non-reloading) ruleset and no learning DB.
+    /// Used in tests and as a fallback when learning is disabled.
     pub fn with_static_rules(engine: Engine, rules: RuleSet, audit: Arc<Db>) -> Self {
         Self {
             engine,
             rules: Arc::new(ArcSwap::from_pointee(rules)),
             audit,
+            learning: None,
         }
     }
 }

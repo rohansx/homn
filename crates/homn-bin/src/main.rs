@@ -231,6 +231,62 @@ async fn main() -> anyhow::Result<()> {
                     .await??;
             std::process::exit(result.code);
         }
+        Some(Command::Learning { action }) => {
+            // US4 — learning subsystem CLI (T067).
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            if let Some(parent) = config.learning.db_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let db = homn_learning::Db::open(&config.learning.db_path).await?;
+            match action.unwrap_or(LearningAction::List) {
+                LearningAction::List => {
+                    let suggestions = db.list_open().await?;
+                    if suggestions.is_empty() {
+                        eprintln!("(no open suggestions yet — use homn for a while)");
+                    } else {
+                        for s in &suggestions {
+                            println!(
+                                "#{id}  {verb:<5}  {repr}\n     observations: {count}  proposed rule:\n     {rule}\n",
+                                id = s.id,
+                                verb = s.proposed_verb,
+                                repr = s.pattern_repr,
+                                count = s.observation_count,
+                                rule = s.proposed_rule,
+                            );
+                        }
+                    }
+                }
+                LearningAction::Accept { id } => {
+                    let suggestion = db.accept(id).await?;
+                    let policy_file = config.policy.policies_dir.join(&suggestion.proposed_file);
+                    let appended = homn_learning::append_rule_to_policy(&policy_file, &suggestion)?;
+                    if appended {
+                        eprintln!(
+                            "appended rule to {}:\n  {}",
+                            policy_file.display(),
+                            suggestion.proposed_rule
+                        );
+                        eprintln!("(daemon will hot-reload within a few hundred ms)");
+                    } else {
+                        eprintln!(
+                            "rule was already in {}; suggestion marked accepted",
+                            policy_file.display()
+                        );
+                    }
+                }
+                LearningAction::Reject { id } => {
+                    db.reject(id, 30).await?;
+                    eprintln!("suggestion #{id} rejected; silenced for 30 days");
+                }
+                LearningAction::Snooze { id, days } => {
+                    db.reject(id, days).await?;
+                    eprintln!("suggestion #{id} snoozed for {days} days");
+                }
+            }
+        }
         Some(Command::Hook { event }) => {
             // T029: read Claude Code hook payload from stdin, call the daemon, write the
             // expected hook-return JSON to stdout. Exit 0 ALWAYS so Claude falls back to its
