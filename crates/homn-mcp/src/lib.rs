@@ -1,10 +1,361 @@
-//! MCP server for `homn`.
+//! MCP server for `homn` (T073-T078).
 //!
-//! Exposes `query_policy`, `explain_decision`, `suggest_rule`, `recent_decisions` (and proxies
-//! ctxgraph tools in Phase 3). Lets the agent introspect its own constraints — the most novel
-//! piece of the product. See [ADR-0006](../../../docs/architecture/adr/0006-mcp-server.md).
+//! Exposes the daemon's policy + audit state as Model Context Protocol tools so an agent
+//! (Claude Code, etc.) can introspect its own constraints:
 //!
-//! Implementation lands across T073–T079.
+//! - `query_policy(tool, tool_input, cwd)` — dry-run evaluation. Returns the decision the
+//!   engine *would* make for this call, the rule that would fire, and the rule's source
+//!   location. **Does not log to audit, does not mutate state.**
+//! - `explain_decision(decision_id)` — look up an audit row by id. Returns the rule that
+//!   fired, the surface that answered (if any), the human's answer (if `ask`), and the
+//!   end-to-end latency.
+//! - `recent_decisions(limit, decision)` — tail the audit log; useful for the agent to ask
+//!   *"what was just denied?"* and propose an alternative without re-attempting.
+//!
+//! The MCP server lives in the same process as the daemon (or can be spun up standalone via
+//! `homn mcp stdio` for Claude's MCP config). It reads policy + audit through `ArcSwap` /
+//! `tokio-rusqlite`, so hot reload + concurrent writes are transparent.
+//!
+//! See [ADR-0006](../../../docs/architecture/adr/0006-mcp-server.md) for why this is in the
+//! design and why we expose it to the agent rather than hiding policy from it.
 
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use homn_audit::Db;
+use homn_policy::{Engine, EvalRequest, RuleSetHandle};
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
+use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
+
+/// Long-lived state the MCP tools read from. Equivalent in shape to homn-daemon's
+/// `DaemonState`; kept here separately so this crate doesn't cyclically depend on the daemon.
+#[derive(Clone)]
+pub struct McpState {
+    /// Policy engine.
+    pub engine: Engine,
+    /// Atomically-swappable ruleset (hot-reload aware).
+    pub rules: RuleSetHandle,
+    /// Audit DB.
+    pub audit: Arc<Db>,
+}
+
+// ============================================================================
+// Tool argument types
+// ============================================================================
+
+/// Args for `query_policy`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QueryPolicyArgs {
+    /// The tool name (e.g. `"Bash"`, `"Read"`, `"WebFetch"`, `"mcp__server__tool"`).
+    pub tool: String,
+    /// The tool's input as JSON. The keys depend on the tool — `"command"` for Bash,
+    /// `"path"` for Read/Edit/Write, `"url"` for WebFetch, etc.
+    #[serde(default)]
+    pub tool_input: serde_json::Value,
+    /// Optional working directory; defaults to empty when omitted.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Args for `explain_decision`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExplainDecisionArgs {
+    /// Audit-log id (as returned by `decisions.create` / `recent_decisions`).
+    pub decision_id: i64,
+}
+
+/// Args for `recent_decisions`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RecentDecisionsArgs {
+    /// Maximum rows to return. Defaults to 10, capped at 100.
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    /// Optional filter: `"allow"`, `"deny"`, or `"ask"`.
+    #[serde(default)]
+    pub decision: Option<String>,
+    /// Optional filter: tool name.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Optional substring search across tool_input + tool_name + cwd (FTS5).
+    #[serde(default)]
+    pub grep: Option<String>,
+}
+
+fn default_limit() -> u32 {
+    10
+}
+
+// ============================================================================
+// MCP server
+// ============================================================================
+
+/// The MCP server. Cheap to clone (state is all Arc-backed).
+#[derive(Clone)]
+pub struct HomnMcpServer {
+    // Consumed by the `#[tool_handler]` macro at expand time; read via reflection in the
+    // generated `call_tool` method. The compiler can't see that use directly, so silence the
+    // dead-code warning here.
+    #[allow(dead_code)]
+    tool_router: ToolRouter<Self>,
+    state: McpState,
+}
+
+impl HomnMcpServer {
+    /// Construct from shared state.
+    pub fn new(state: McpState) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            state,
+        }
+    }
+}
+
+#[tool_router]
+impl HomnMcpServer {
+    #[tool(
+        description = "Dry-run policy evaluation. Returns what decision homn would make for the given tool call WITHOUT logging or affecting any state. Use this before attempting an action you suspect may be denied — the response tells you the rule that would fire and lets you propose alternatives. Args: tool (string), tool_input (object), cwd (optional string)."
+    )]
+    async fn query_policy(
+        &self,
+        Parameters(args): Parameters<QueryPolicyArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let started = Instant::now();
+        let cwd = args.cwd.clone().unwrap_or_default();
+        let eval_req = EvalRequest::from_tool_call(&args.tool, &args.tool_input, &cwd);
+        let rules = self.state.rules.load();
+        let outcome = self.state.engine.eval(&rules, &eval_req);
+        let latency_us = started.elapsed().as_micros();
+
+        let body = serde_json::json!({
+            "decision": decision_str(outcome.decision),
+            "rule_source": outcome.rule.as_ref().map(|loc| serde_json::json!({
+                "file": loc.file.display().to_string(),
+                "line": loc.line,
+            })),
+            "rule_text": outcome.rule_text,
+            "is_dry_run": true,
+            "eval_latency_us": latency_us,
+        });
+        Ok(CallToolResult::success(vec![Content::json(body)?]))
+    }
+
+    #[tool(
+        description = "Look up a single audit-log entry by its decision id. Returns the rule that fired, the surface that answered (if any), the human's answer (if it was ask-resolved), and timing. Use this to understand why a prior call was decided the way it was."
+    )]
+    async fn explain_decision(
+        &self,
+        Parameters(args): Parameters<ExplainDecisionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match find_decision_by_id(&self.state.audit, args.decision_id).await {
+            Ok(Some(row)) => Ok(CallToolResult::success(vec![Content::json(
+                record_to_json(&row),
+            )?])),
+            Ok(None) => Err(McpError::invalid_params(
+                format!("no decision with id {}", args.decision_id),
+                None,
+            )),
+            Err(err) => Err(McpError::internal_error(
+                format!("audit lookup failed: {err}"),
+                None,
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Return recent audit-log entries with optional filters. Useful for the agent to see what's been denied/allowed recently and propose alternatives. Args: limit (default 10, max 100), decision (\"allow\"/\"deny\"/\"ask\"), tool (filter by tool name), grep (FTS5 substring search)."
+    )]
+    async fn recent_decisions(
+        &self,
+        Parameters(args): Parameters<RecentDecisionsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = args.limit.clamp(1, 100);
+        let decision = match args.decision.as_deref() {
+            Some("allow") => Some(homn_types::Decision::Allow),
+            Some("deny") => Some(homn_types::Decision::Deny),
+            Some("ask") => Some(homn_types::Decision::Ask),
+            Some(other) => {
+                return Err(McpError::invalid_params(
+                    format!("invalid decision filter `{other}` — must be allow|deny|ask"),
+                    None,
+                ));
+            }
+            None => None,
+        };
+        let query = homn_audit::LogQuery {
+            decision,
+            tool_name: args.tool.clone(),
+            grep: args.grep.clone(),
+            limit,
+            ..Default::default()
+        };
+        match self.state.audit.query(query).await {
+            Ok(rows) => {
+                let arr: Vec<_> = rows.iter().map(record_to_json).collect();
+                Ok(CallToolResult::success(vec![Content::json(arr)?]))
+            }
+            Err(err) => Err(McpError::internal_error(
+                format!("audit query failed: {err}"),
+                None,
+            )),
+        }
+    }
+}
+
+fn decision_str(d: homn_types::Decision) -> &'static str {
+    match d {
+        homn_types::Decision::Allow => "allow",
+        homn_types::Decision::Deny => "deny",
+        homn_types::Decision::Ask => "ask",
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for HomnMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "homn — local-first policy daemon for coding agents. \
+             Use `query_policy` to check what's allowed *before* attempting an action. \
+             If a call was denied, use `explain_decision` to read the rule that fired. \
+             Use `recent_decisions` to see what's happened recently.",
+        )
+    }
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+async fn find_decision_by_id(
+    audit: &Arc<Db>,
+    decision_id: i64,
+) -> anyhow::Result<Option<homn_types::DecisionRecord>> {
+    // We don't have a `by_id` query method; query a large window and filter.
+    // For an MCP `explain_decision` call this is fine — the audit DB has at most ~30 days of data.
+    let rows = audit
+        .query(homn_audit::LogQuery {
+            limit: 10_000,
+            ..Default::default()
+        })
+        .await?;
+    Ok(rows.into_iter().find(|r| r.id == decision_id))
+}
+
+fn record_to_json(rec: &homn_types::DecisionRecord) -> serde_json::Value {
+    serde_json::json!({
+        "decision_id": rec.id,
+        "ts_millis": rec.ts_millis,
+        "session_id": rec.session_id.0,
+        "cwd": rec.cwd.display().to_string(),
+        "tool_name": rec.tool_name,
+        "tool_input": rec.tool_input,
+        "decision": decision_str(rec.decision),
+        "human_answer": rec.human_answer.map(|a| match a {
+            homn_types::HumanAnswer::Allow => "allow",
+            homn_types::HumanAnswer::Deny => "deny",
+            homn_types::HumanAnswer::AlwaysAllow => "always_allow",
+            homn_types::HumanAnswer::AlwaysDeny => "always_deny",
+        }),
+        "rule_source": rec.rule_source.as_ref().map(|loc| serde_json::json!({
+            "file": loc.file.display().to_string(),
+            "line": loc.line,
+        })),
+        "rule_text": rec.rule_text,
+        "latency_ms": rec.latency_ms,
+        "surface": rec.surface.map(|s| match s {
+            homn_types::Surface::Tui => "tui",
+            homn_types::Surface::Face => "face",
+            homn_types::Surface::Ntfy => "ntfy",
+            homn_types::Surface::Mcp => "mcp",
+            homn_types::Surface::HookDirect => "hook-direct",
+        }),
+    })
+}
+
+// ============================================================================
+// Stdio transport entry point
+// ============================================================================
+
+/// Run the MCP server on stdio. Blocks until the peer disconnects or an error occurs.
+///
+/// This is what `homn mcp stdio` calls. Claude Code spawns us, connects stdin↔stdout, and
+/// drives the MCP protocol on top.
+pub async fn serve_stdio(state: McpState) -> anyhow::Result<()> {
+    use rmcp::transport::stdio;
+    use rmcp::ServiceExt;
+
+    tracing::info!("homn mcp stdio server starting");
+    let server = HomnMcpServer::new(state);
+    let svc = server.serve(stdio()).await?;
+    svc.waiting().await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arc_swap::ArcSwap;
+    use homn_policy::RuleSet;
+
+    async fn test_state(policy_src: &str) -> McpState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, policy_src, "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+        }
+    }
+
+    #[tokio::test]
+    async fn server_constructs_with_state() {
+        let state = test_state("").await;
+        let server = HomnMcpServer::new(state);
+        let info = server.get_info();
+        assert!(
+            info.instructions
+                .as_ref()
+                .is_some_and(|s| s.contains("homn")),
+            "server info should mention homn"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_to_json_round_trips_known_fields() {
+        let rec = homn_types::DecisionRecord {
+            id: 7,
+            ts_millis: 1_715_000_000_000,
+            session_id: homn_types::SessionId::new("01HXY"),
+            cwd: std::path::PathBuf::from("/home/x"),
+            tool_name: "Bash".into(),
+            tool_input: serde_json::json!({"command": "ls"}),
+            decision: homn_types::Decision::Deny,
+            human_answer: None,
+            rule_source: Some(homn_types::RuleSourceLocation {
+                file: std::path::PathBuf::from("default.rhai"),
+                line: 14,
+            }),
+            rule_text: Some("deny if ...".into()),
+            ctxgraph_hit: None,
+            latency_ms: 5,
+            surface: Some(homn_types::Surface::HookDirect),
+            source: homn_types::DecisionSource::Hook,
+        };
+        let v = record_to_json(&rec);
+        assert_eq!(v["decision_id"], 7);
+        assert_eq!(v["decision"], "deny");
+        assert_eq!(v["rule_source"]["line"], 14);
+        assert_eq!(v["surface"], "hook-direct");
+    }
+
+    #[test]
+    fn decision_str_maps_all_variants() {
+        assert_eq!(decision_str(homn_types::Decision::Allow), "allow");
+        assert_eq!(decision_str(homn_types::Decision::Deny), "deny");
+        assert_eq!(decision_str(homn_types::Decision::Ask), "ask");
+    }
+}

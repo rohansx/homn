@@ -10,6 +10,14 @@ repository.workspace   = true
 homepage.workspace     = true
 
 [dependencies]
-homn-types  = { workspace = true }
-thiserror   = { workspace = true }
-tracing     = { workspace = true }
+homn-types   = { workspace = true }
+homn-policy  = { workspace = true }
+homn-audit   = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+anyhow       = { workspace = true }
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+rmcp         = { workspace = true }
+arc-swap     = { workspace = true }

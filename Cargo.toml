@@ -61,6 +61,7 @@ portable-pty   = "0.8"
 signal-hook    = "0.3"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 futures        = "0.3"
+rmcp           = { version = "1", features = ["server", "macros", "schemars", "transport-io"] }
 
 [profile.release]
 opt-level     = 3

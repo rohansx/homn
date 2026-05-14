@@ -18,7 +18,10 @@ homn-daemon   = { workspace = true }
 homn-types    = { workspace = true }
 homn-hook     = { workspace = true }
 homn-audit    = { workspace = true }
+homn-mcp      = { workspace = true }
+homn-policy   = { workspace = true }
 regex         = { workspace = true }
+arc-swap      = { workspace = true }
 
 clap          = { workspace = true }
 tokio         = { workspace = true }

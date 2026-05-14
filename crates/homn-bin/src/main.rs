@@ -254,6 +254,42 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", serde_json::to_string(&response)?);
         }
+        Some(Command::Mcp { transport }) => {
+            // T078: start the MCP server. stdio is what Claude Code's MCP config invokes;
+            // HTTP transport (T071) lands in a follow-up.
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let engine = homn_policy::Engine::new();
+            let default_policy = config.policy.policies_dir.join("default.rhai");
+            let rules = if default_policy.exists() {
+                homn_policy::load_ruleset(&default_policy)?
+            } else {
+                homn_policy::RuleSet::parse(&engine, "", "default.rhai")?
+            };
+            let rules_handle: homn_policy::RuleSetHandle =
+                std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(rules));
+            if let Some(parent) = config.audit.db_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let audit = std::sync::Arc::new(homn_audit::Db::open(&config.audit.db_path).await?);
+            let state = homn_mcp::McpState {
+                engine,
+                rules: rules_handle,
+                audit,
+            };
+            match transport {
+                Some(McpTransport::Stdio) | None => {
+                    homn_mcp::serve_stdio(state).await?;
+                }
+                Some(McpTransport::Http { bind }) => {
+                    anyhow::bail!(
+                        "MCP HTTP transport is not implemented yet (would bind on {bind}); use `homn mcp stdio` for now"
+                    );
+                }
+            }
+        }
         Some(other) => {
             anyhow::bail!(
                 "subcommand `{other:?}` is not implemented yet — see specs/001-policy-engine/tasks.md"
