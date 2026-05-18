@@ -40,6 +40,41 @@ pub enum PolicySeedOutcome {
     KeptUnparseable(PathBuf),
 }
 
+/// Generate the `systemd --user` unit text for the daemon at `exec_path`.
+///
+/// Sourced from the committed `dist/homn.service` template (the single source of truth
+/// for the hardening directives) with the `ExecStart` path rewritten to `exec_path`.
+pub fn systemd_unit(exec_path: &Path) -> String {
+    const TEMPLATE: &str = include_str!("../../../dist/homn.service");
+    TEMPLATE.replace("%h/.cargo/bin/homn", &exec_path.display().to_string())
+}
+
+/// Generate a launchd LaunchAgent plist for the daemon at `exec_path` (macOS).
+pub fn launchd_plist(exec_path: &Path) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>sh.homn.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exec}</string>
+        <string>daemon</string>
+        <string>--foreground</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+"#,
+        exec = exec_path.display(),
+    )
+}
+
 /// Ensure `<policies_dir>/default.rhai` exists. Idempotent and non-destructive: an
 /// existing policy is never overwritten, even if it fails to parse.
 pub fn seed_policy(
@@ -113,5 +148,27 @@ mod tests {
             "broken = = =\n",
             "a broken policy is flagged but never clobbered"
         );
+    }
+
+    #[test]
+    fn systemd_unit_embeds_the_resolved_binary_path() {
+        let unit = systemd_unit(Path::new("/home/u/.local/bin/homn"));
+        assert!(
+            unit.contains("ExecStart=/home/u/.local/bin/homn daemon --foreground"),
+            "ExecStart must use the resolved absolute path:\n{unit}"
+        );
+        assert!(
+            !unit.contains("%h/.cargo/bin/homn"),
+            "the template placeholder must be gone"
+        );
+        assert!(unit.contains("[Install]"), "still a complete unit file");
+    }
+
+    #[test]
+    fn launchd_plist_embeds_the_resolved_binary_path() {
+        let plist = launchd_plist(Path::new("/Users/u/.local/bin/homn"));
+        assert!(plist.contains("<string>/Users/u/.local/bin/homn</string>"));
+        assert!(plist.contains("sh.homn.daemon"));
+        assert!(plist.contains("<key>RunAtLoad</key>"));
     }
 }
