@@ -5,7 +5,11 @@
 
 # node (tauri webview / chrome extension)
 node_modules
-dist
+# dist/ holds build output AND hand-authored distribution files — ignore the former,
+# keep the latter (homn.service is include_str!'d into homn-hook; the build breaks without it).
+dist/*
+!dist/homn.service
+!dist/README.md
 .next
 .cache
 

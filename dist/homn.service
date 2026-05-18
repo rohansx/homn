@@ -1,0 +1,39 @@
+[Unit]
+Description=homn — local-first policy daemon for coding agents
+Documentation=https://github.com/rohansx/homn
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/homn daemon --foreground
+Restart=on-failure
+RestartSec=2s
+
+# Conservative resource limits — adjust if needed.
+MemoryMax=256M
+TasksMax=64
+
+# The daemon is local-first and never makes outbound network calls. Allow loopback only
+# (the optional ntfy mirror talks to a configurable HTTP endpoint; if you enable it,
+# loosen this restriction or remove the line).
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# Filesystem: rw for state + config, ro for the rest.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/homn %h/.local/share/homn %t
+
+# Hardening (most have no functional cost for our use case).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
