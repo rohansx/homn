@@ -184,6 +184,36 @@ fn is_homn_entry(v: &Value) -> bool {
     v.get("_homn").and_then(|m| m.as_str()) == Some(HOMN_MARKER)
 }
 
+/// True if a `PermissionRequest` entry is one homn installed.
+fn entry_is_homn(entry: &Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|hooks| {
+            hooks.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.contains("homn hook"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Remove homn's `PermissionRequest` hook entry from a parsed `settings.json`.
+/// Returns `true` if anything was removed; other hooks are left untouched.
+pub fn remove_homn_entry(settings: &mut Value) -> bool {
+    let Some(arr) = settings
+        .get_mut("hooks")
+        .and_then(|h| h.get_mut("PermissionRequest"))
+        .and_then(|pr| pr.as_array_mut())
+    else {
+        return false;
+    };
+    let before = arr.len();
+    arr.retain(|entry| !entry_is_homn(entry));
+    before != arr.len()
+}
+
 fn backup_path_for(settings_path: &Path) -> PathBuf {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -313,6 +343,28 @@ mod tests {
         let merged: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(is_homn_entry_present(&merged));
         assert_eq!(merged["otherKey"], "untouched");
+    }
+
+    #[test]
+    fn remove_homn_entry_drops_only_homn_and_keeps_others() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PermissionRequest": [
+                    { "matcher": "Bash", "hooks": [
+                        { "type": "command", "command": "someone-elses-hook" } ] },
+                    { "matcher": "*", "hooks": [
+                        { "type": "command", "command": "homn hook permission-request" } ] }
+                ]
+            }
+        });
+        assert!(remove_homn_entry(&mut settings), "removes the homn entry");
+        let arr = settings["hooks"]["PermissionRequest"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "the non-homn hook survives");
+        assert_eq!(arr[0]["hooks"][0]["command"], "someone-elses-hook");
+        assert!(
+            !remove_homn_entry(&mut settings),
+            "second removal is a no-op (idempotent)"
+        );
     }
 
     #[test]
