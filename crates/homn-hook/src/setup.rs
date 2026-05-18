@@ -7,6 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::install::run_install;
+use crate::InstallReport;
+
 /// Which bundled policy profile `homn setup` seeds when no policy exists yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyProfile {
@@ -169,6 +172,65 @@ pub fn remove_launchd_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Inputs for [`run_setup`]. Paths are passed in (resolved by the CLI from daemon config)
+/// so this function is fully testable against temp directories.
+pub struct SetupOptions {
+    /// Directory that holds `default.rhai` (the daemon's configured policies dir).
+    pub policies_dir: PathBuf,
+    /// Path to Claude Code's `settings.json`.
+    pub settings_path: PathBuf,
+    /// Profile to seed when no policy exists yet.
+    pub profile: PolicyProfile,
+    /// Whether to install + start the background service.
+    pub install_service: bool,
+}
+
+/// What happened to the background service during setup.
+#[derive(Debug)]
+pub enum ServiceOutcome {
+    /// Installed + started; here is the unit/plist path.
+    Installed(PathBuf),
+    /// `--no-service` was passed.
+    SkippedByFlag,
+    /// Host has no supported service manager — manual steps needed.
+    UnsupportedPlatform,
+}
+
+/// What [`run_setup`] did, for the CLI to report.
+pub struct SetupReport {
+    /// Outcome of policy seeding.
+    pub policy: PolicySeedOutcome,
+    /// Outcome of the Claude Code hook install.
+    pub hook: InstallReport,
+    /// Outcome of service installation.
+    pub service: ServiceOutcome,
+}
+
+/// Run `homn setup`: seed the policy, install the hook, install the service. Idempotent.
+pub fn run_setup(opts: SetupOptions) -> anyhow::Result<SetupReport> {
+    let policy = seed_policy(&opts.policies_dir, opts.profile)?;
+
+    let mut sink = std::io::sink();
+    let hook = run_install(&opts.settings_path, true, &mut sink)?;
+
+    let service = if !opts.install_service {
+        ServiceOutcome::SkippedByFlag
+    } else {
+        let exec = std::env::current_exe()?;
+        match detect_init_system() {
+            InitSystem::Systemd => ServiceOutcome::Installed(install_systemd_service(&exec)?),
+            InitSystem::Launchd => ServiceOutcome::Installed(install_launchd_service(&exec)?),
+            InitSystem::Unsupported => ServiceOutcome::UnsupportedPlatform,
+        }
+    };
+
+    Ok(SetupReport {
+        policy,
+        hook,
+        service,
+    })
+}
+
 /// Ensure `<policies_dir>/default.rhai` exists. Idempotent and non-destructive: an
 /// existing policy is never overwritten, even if it fails to parse.
 pub fn seed_policy(
@@ -276,5 +338,32 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn detect_init_system_is_launchd_on_macos() {
         assert_eq!(detect_init_system(), InitSystem::Launchd);
+    }
+
+    #[test]
+    fn run_setup_without_service_seeds_policy_and_installs_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        let policies = dir.path().join("config/homn/policies");
+        let settings = dir.path().join("claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+
+        let report = run_setup(SetupOptions {
+            policies_dir: policies.clone(),
+            settings_path: settings.clone(),
+            profile: PolicyProfile::Default,
+            install_service: false,
+        })
+        .unwrap();
+
+        assert!(matches!(report.policy, PolicySeedOutcome::Written(_)));
+        assert!(matches!(report.service, ServiceOutcome::SkippedByFlag));
+        assert!(policies.join("default.rhai").exists(), "policy seeded");
+
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(
+            crate::install::is_homn_entry_present(&written),
+            "the homn hook is now in settings.json"
+        );
     }
 }
