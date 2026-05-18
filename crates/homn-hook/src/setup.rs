@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::install::run_install;
+use crate::install::{remove_homn_entry, run_install};
 use crate::InstallReport;
 
 /// Which bundled policy profile `homn setup` seeds when no policy exists yet.
@@ -231,6 +231,54 @@ pub fn run_setup(opts: SetupOptions) -> anyhow::Result<SetupReport> {
     })
 }
 
+/// What [`run_uninstall`] did, for the CLI to report.
+pub struct UninstallReport {
+    /// Whether homn's hook entry was removed from `settings.json`.
+    pub hook_removed: bool,
+    /// Whether the background service was stopped + removed.
+    pub service_removed: bool,
+}
+
+/// Run `homn uninstall`: remove the hook, and (if `remove_service`) the service.
+/// Policy files and the audit DB are left in place — that is the user's data.
+pub fn run_uninstall(
+    settings_path: &Path,
+    remove_service: bool,
+) -> anyhow::Result<UninstallReport> {
+    let service_removed = if remove_service {
+        match detect_init_system() {
+            InitSystem::Systemd => {
+                remove_systemd_service()?;
+                true
+            }
+            InitSystem::Launchd => {
+                remove_launchd_service()?;
+                true
+            }
+            InitSystem::Unsupported => false,
+        }
+    } else {
+        false
+    };
+
+    let hook_removed = if settings_path.exists() {
+        let mut settings: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(settings_path)?)?;
+        let removed = remove_homn_entry(&mut settings);
+        if removed {
+            std::fs::write(settings_path, serde_json::to_string_pretty(&settings)?)?;
+        }
+        removed
+    } else {
+        false
+    };
+
+    Ok(UninstallReport {
+        hook_removed,
+        service_removed,
+    })
+}
+
 /// Ensure `<policies_dir>/default.rhai` exists. Idempotent and non-destructive: an
 /// existing policy is never overwritten, even if it fails to parse.
 pub fn seed_policy(
@@ -338,6 +386,30 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn detect_init_system_is_launchd_on_macos() {
         assert_eq!(detect_init_system(), InitSystem::Launchd);
+    }
+
+    #[test]
+    fn run_uninstall_removes_the_hook_without_touching_the_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("settings.json");
+        std::fs::write(
+            &settings,
+            r#"{"hooks":{"PermissionRequest":[
+                {"matcher":"*","hooks":[
+                    {"type":"command","command":"homn hook permission-request"}]}]}}"#,
+        )
+        .unwrap();
+
+        let report = run_uninstall(&settings, false).unwrap();
+        assert!(report.hook_removed);
+        assert!(
+            !report.service_removed,
+            "remove_service=false skips the service"
+        );
+
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(!crate::install::is_homn_entry_present(&after));
     }
 
     #[test]
