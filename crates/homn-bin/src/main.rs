@@ -102,6 +102,21 @@ enum Command {
         /// The hook event name (permission-request, notification, session-start, etc.).
         event: String,
     },
+    /// One-command first-run: seed a policy, install the Claude Code hook, start the service.
+    Setup {
+        /// Set up the policy + hook but do not install a background service.
+        #[arg(long)]
+        no_service: bool,
+        /// Which bundled policy to seed when none exists: default | strict | relaxed.
+        #[arg(long)]
+        policy: Option<String>,
+    },
+    /// Reverse `homn setup`: remove the service + hook. Keeps your policy + audit log.
+    Uninstall {
+        /// Also delete ~/.config/homn and ~/.local/share/homn (your policy + audit DB).
+        #[arg(long)]
+        purge: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -351,6 +366,51 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Rule { action }) => {
             // T084 + rule CLI: list / edit / add / trace policy rules.
             rule_command(action.unwrap_or(RuleAction::List)).await?;
+        }
+        Some(Command::Setup { no_service, policy }) => {
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let profile = match policy.as_deref() {
+                Some("strict") => homn_hook::setup::PolicyProfile::Strict,
+                Some("relaxed") => homn_hook::setup::PolicyProfile::Relaxed,
+                Some("default") | None => homn_hook::setup::PolicyProfile::Default,
+                Some(other) => {
+                    anyhow::bail!("unknown --policy `{other}` (expected default|strict|relaxed)")
+                }
+            };
+            let report = homn_hook::setup::run_setup(homn_hook::setup::SetupOptions {
+                policies_dir: config.policy.policies_dir.clone(),
+                settings_path: homn_hook::default_settings_path(),
+                profile,
+                install_service: !no_service,
+            })?;
+            print_setup_report(&report);
+        }
+        Some(Command::Uninstall { purge }) => {
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let report =
+                homn_hook::setup::run_uninstall(&homn_hook::default_settings_path(), true)?;
+            eprintln!(
+                "hook removed: {}   service removed: {}",
+                report.hook_removed, report.service_removed
+            );
+            if purge {
+                if let Some(homn_cfg) = config.policy.policies_dir.parent() {
+                    let _ = std::fs::remove_dir_all(homn_cfg);
+                    eprintln!("purged {}", homn_cfg.display());
+                }
+                if let Some(audit_dir) = config.audit.db_path.parent() {
+                    let _ = std::fs::remove_dir_all(audit_dir);
+                    eprintln!("purged {}", audit_dir.display());
+                }
+            } else {
+                eprintln!(
+                    "kept your policy ({}) and audit log ({}) — use --purge to remove them",
+                    config.policy.policies_dir.display(),
+                    config.audit.db_path.display(),
+                );
+            }
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -777,4 +837,35 @@ fn verb_style(d: homn_types::Decision, s: &Style) -> (&'static str, &'static str
         homn_types::Decision::Ask => (s.yellow, "ask"),
         homn_types::Decision::Allow => (s.green, "allow"),
     }
+}
+
+// ===== `homn setup` reporting ==========================================================
+
+fn print_setup_report(report: &homn_hook::setup::SetupReport) {
+    use homn_hook::setup::{PolicySeedOutcome, ServiceOutcome};
+
+    eprintln!("\nhomn setup");
+    match &report.policy {
+        PolicySeedOutcome::Written(p) => eprintln!("  policy:   seeded {}", p.display()),
+        PolicySeedOutcome::KeptExisting(p) => {
+            eprintln!("  policy:   kept your existing {}", p.display())
+        }
+        PolicySeedOutcome::KeptUnparseable(p) => eprintln!(
+            "  policy:   WARNING {} does not parse — left untouched; fix it with `homn rule edit`",
+            p.display()
+        ),
+    }
+    eprintln!("  hook:     installed into Claude Code settings.json");
+    match &report.service {
+        ServiceOutcome::Installed(p) => {
+            eprintln!("  service:  installed + started ({})", p.display())
+        }
+        ServiceOutcome::SkippedByFlag => {
+            eprintln!("  service:  skipped (--no-service) — run `homn daemon` yourself")
+        }
+        ServiceOutcome::UnsupportedPlatform => eprintln!(
+            "  service:  unsupported platform — start `homn daemon` manually or via your init system"
+        ),
+    }
+    eprintln!("\ndone. edit your rules anytime with `homn rule edit`.");
 }
