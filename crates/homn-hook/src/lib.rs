@@ -23,6 +23,11 @@ pub mod setup;
 
 pub use install::{default_settings_path, install_snippet, run_install, InstallReport};
 pub use pty::{run_under_pty, PtyConfig, PtyExit};
+pub use setup::{
+    detect_init_system, launchd_plist, run_setup, run_uninstall, seed_policy, systemd_unit,
+    InitSystem, PolicyProfile, PolicySeedOutcome, ServiceOutcome, SetupOptions, SetupReport,
+    UninstallReport,
+};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

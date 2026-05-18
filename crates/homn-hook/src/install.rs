@@ -184,10 +184,13 @@ fn is_homn_entry(v: &Value) -> bool {
     v.get("_homn").and_then(|m| m.as_str()) == Some(HOMN_MARKER)
 }
 
-/// True if a `PermissionRequest` entry is one homn installed.
+/// True if a `PermissionRequest` entry should be removed by `homn uninstall`.
 /// Matches by the `_homn` marker field (set by `--apply`) or by a command
 /// containing `"homn hook"` (set by hand-added entries).
-fn entry_is_homn(entry: &Value) -> bool {
+///
+/// Distinct from [`is_homn_entry`] which matches by marker only and is used for
+/// idempotency checking during install.
+fn entry_is_homn_removable(entry: &Value) -> bool {
     // Check the `_homn` marker field first (install path stamps this).
     if entry.get("_homn").and_then(|m| m.as_str()) == Some(HOMN_MARKER) {
         return true;
@@ -217,11 +220,11 @@ pub fn remove_homn_entry(settings: &mut Value) -> bool {
         return false;
     };
     let before = arr.len();
-    arr.retain(|entry| !entry_is_homn(entry));
+    arr.retain(|entry| !entry_is_homn_removable(entry));
     before != arr.len()
 }
 
-fn backup_path_for(settings_path: &Path) -> PathBuf {
+pub(crate) fn backup_path_for(settings_path: &Path) -> PathBuf {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -393,7 +396,10 @@ mod tests {
                 ]
             }
         });
-        assert!(remove_homn_entry(&mut settings), "marker-stamped entry is removed even when command doesn't contain 'homn hook'");
+        assert!(
+            remove_homn_entry(&mut settings),
+            "marker-stamped entry is removed even when command doesn't contain 'homn hook'"
+        );
         let arr = settings["hooks"]["PermissionRequest"].as_array().unwrap();
         assert_eq!(arr.len(), 1, "unrelated hook survives");
         assert_eq!(arr[0]["hooks"][0]["command"], "other-hook");

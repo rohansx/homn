@@ -707,6 +707,7 @@ dependencies = [
  "anyhow",
  "futures",
  "homn-audit",
+ "homn-policy",
  "homn-tui",
  "homn-types",
  "portable-pty",

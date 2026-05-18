@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::install::{remove_homn_entry, run_install};
+use crate::install::{backup_path_for, remove_homn_entry, run_install};
 use crate::InstallReport;
 
 /// Which bundled policy profile `homn setup` seeds when no policy exists yet.
@@ -266,7 +266,13 @@ pub fn run_uninstall(
             serde_json::from_str(&std::fs::read_to_string(settings_path)?)?;
         let removed = remove_homn_entry(&mut settings);
         if removed {
-            std::fs::write(settings_path, serde_json::to_string_pretty(&settings)?)?;
+            // Mirror run_install --apply: back up the original, then write atomically via
+            // a temp file + rename so a crash mid-write cannot truncate the user's file.
+            let backup = backup_path_for(settings_path);
+            std::fs::copy(settings_path, &backup)?;
+            let tmp = settings_path.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_string_pretty(&settings)?)?;
+            std::fs::rename(&tmp, settings_path)?;
         }
         removed
     } else {
@@ -410,6 +416,20 @@ mod tests {
         let after: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
         assert!(!crate::install::is_homn_entry_present(&after));
+
+        // A timestamped backup of the original settings.json must exist alongside the updated file.
+        let backup_exists = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with("settings.json.bak.")
+            });
+        assert!(
+            backup_exists,
+            "run_uninstall must write a timestamped backup"
+        );
     }
 
     #[test]
