@@ -2,6 +2,16 @@
 
 > 5-minute walkthrough. Targets: Linux + macOS. Windows comes later.
 
+## Quick start
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rohansx/homn/master/install.sh | sh
+homn setup
+```
+
+That installs the binary, seeds a policy, wires the Claude Code hook, and starts the
+daemon. The rest of this page covers the manual, step-by-step path and how each piece works.
+
 ## What works today
 
 - **Deterministic deny** via Claude Code's `PermissionRequest` hook + the **`homn run claude`** PTY wrapper (which enforces deny even with upstream bug [#19298](https://github.com/anthropics/claude-code/issues/19298) by synthesizing `n\n` into the prompt when the audit log shows a recent deny).

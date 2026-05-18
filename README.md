@@ -14,37 +14,27 @@ each layer is independently useful. each one makes the next one more interesting
 
 **v0 alpha — usable for the deterministic deny path today.** see [`docs/getting-started.md`](./docs/getting-started.md) for a 5-minute walkthrough. The TUI prompt for `ask` decisions, the PTY-tap wrapper, the face, and ctxgraph integration land in later phases.
 
-## quick start
+## Install
 
 ```sh
-# Build
-cargo install --path crates/homn-bin   # (or `cargo build --release` and copy target/release/homn into PATH)
-
-# Wire into Claude Code
-homn install --apply                   # merges into ~/.claude/settings.json with a timestamped backup
-
-# Write your policy
-mkdir -p ~/.config/homn/policies
-cat > ~/.config/homn/policies/default.rhai <<'EOF'
-// Conservative starting rules — copy policies/default.rhai for the full set.
-deny  if tool == "Bash" && cmd.contains("rm -rf") && !cwd.starts_with("/tmp");
-deny  if tool == "Bash" && cmd.matches("git push --force *");
-allow if tool == "Read" && path.starts_with(home);
-allow if tool == "Bash" && cmd.matches("npm run *");
-allow if tool == "Bash" && cmd.matches("cargo (build|test|check) *");
-EOF
-
-# Run the daemon (foreground for now; a systemd user unit is coming)
-homn daemon --foreground &
-
-# Use claude normally. When you hit a deny rule, the call is blocked and audited.
-claude
-
-# Read your history
-homn log --since 1h
-homn log --denied
-homn log --grep "rm -rf" --json | jq
+curl -fsSL https://raw.githubusercontent.com/rohansx/homn/master/install.sh | sh
+homn setup
 ```
+
+`homn setup` seeds a policy, installs the Claude Code hook (with a backup), and starts
+the background daemon. It is idempotent — safe to re-run. Reverse it any time with
+`homn uninstall`.
+
+<details>
+<summary>Or, step by step / build from source</summary>
+
+```sh
+cargo install --git https://github.com/rohansx/homn homn-bin
+homn rule edit          # seed + edit your policy
+homn install --apply    # install the Claude Code hook
+homn daemon             # or install a service unit — see docs/getting-started.md
+```
+</details>
 
 ## optional: wire homn as an MCP server
 
