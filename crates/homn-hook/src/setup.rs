@@ -75,6 +75,100 @@ pub fn launchd_plist(exec_path: &Path) -> String {
     )
 }
 
+/// Which service manager `homn setup` registers the daemon with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitSystem {
+    /// Linux with systemd — a `--user` unit.
+    Systemd,
+    /// macOS — a launchd LaunchAgent.
+    Launchd,
+    /// Neither — `homn setup` prints manual instructions.
+    Unsupported,
+}
+
+/// Detect the host's service manager.
+pub fn detect_init_system() -> InitSystem {
+    if cfg!(target_os = "linux") {
+        InitSystem::Systemd
+    } else if cfg!(target_os = "macos") {
+        InitSystem::Launchd
+    } else {
+        InitSystem::Unsupported
+    }
+}
+
+/// Run a command, returning an error on non-zero exit.
+fn run(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
+    let status = std::process::Command::new(cmd).args(args).status()?;
+    if !status.success() {
+        anyhow::bail!("`{cmd} {}` failed ({status})", args.join(" "));
+    }
+    Ok(())
+}
+
+/// `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user`.
+fn systemd_user_dir() -> anyhow::Result<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Ok(PathBuf::from(xdg).join("systemd").join("user"));
+        }
+    }
+    let home = std::env::var("HOME")?;
+    Ok(PathBuf::from(home).join(".config/systemd/user"))
+}
+
+/// `~/Library/LaunchAgents/sh.homn.daemon.plist`.
+fn launchd_plist_path() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME")?;
+    Ok(PathBuf::from(home).join("Library/LaunchAgents/sh.homn.daemon.plist"))
+}
+
+/// Write + enable + start the systemd `--user` service. Returns the unit path.
+pub fn install_systemd_service(exec_path: &Path) -> anyhow::Result<PathBuf> {
+    let dir = systemd_user_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let unit_path = dir.join("homn.service");
+    std::fs::write(&unit_path, systemd_unit(exec_path))?;
+    run("systemctl", &["--user", "daemon-reload"])?;
+    run("systemctl", &["--user", "enable", "--now", "homn.service"])?;
+    Ok(unit_path)
+}
+
+/// Stop + disable + remove the systemd `--user` service. Safe if not installed.
+pub fn remove_systemd_service() -> anyhow::Result<()> {
+    let _ = run("systemctl", &["--user", "disable", "--now", "homn.service"]);
+    if let Ok(unit) = systemd_user_dir().map(|d| d.join("homn.service")) {
+        if unit.exists() {
+            std::fs::remove_file(unit)?;
+        }
+    }
+    let _ = run("systemctl", &["--user", "daemon-reload"]);
+    Ok(())
+}
+
+/// Write + load the launchd LaunchAgent. Returns the plist path.
+pub fn install_launchd_service(exec_path: &Path) -> anyhow::Result<PathBuf> {
+    let plist_path = launchd_plist_path()?;
+    if let Some(parent) = plist_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&plist_path, launchd_plist(exec_path))?;
+    let _ = run("launchctl", &["unload", &plist_path.display().to_string()]);
+    run("launchctl", &["load", &plist_path.display().to_string()])?;
+    Ok(plist_path)
+}
+
+/// Unload + remove the launchd LaunchAgent. Safe if not installed.
+pub fn remove_launchd_service() -> anyhow::Result<()> {
+    if let Ok(plist_path) = launchd_plist_path() {
+        let _ = run("launchctl", &["unload", &plist_path.display().to_string()]);
+        if plist_path.exists() {
+            std::fs::remove_file(plist_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Ensure `<policies_dir>/default.rhai` exists. Idempotent and non-destructive: an
 /// existing policy is never overwritten, even if it fails to parse.
 pub fn seed_policy(
@@ -170,5 +264,17 @@ mod tests {
         assert!(plist.contains("<string>/Users/u/.local/bin/homn</string>"));
         assert!(plist.contains("sh.homn.daemon"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn detect_init_system_is_systemd_on_linux() {
+        assert_eq!(detect_init_system(), InitSystem::Systemd);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detect_init_system_is_launchd_on_macos() {
+        assert_eq!(detect_init_system(), InitSystem::Launchd);
     }
 }
