@@ -45,6 +45,35 @@ impl Outcome {
     }
 }
 
+/// One rule's contribution to a [`Trace`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleTrace {
+    /// The decision this rule produces when it fires (`deny`, `ask`, or `allow`).
+    pub verb: Decision,
+    /// File + line of the rule.
+    pub location: RuleSourceLocation,
+    /// The rule's full source text.
+    pub source_text: String,
+    /// Whether the rule matched this request.
+    pub matched: bool,
+    /// Whether this rule is the one that decided the outcome — the first match in
+    /// deny → ask → allow priority order. At most one rule in a trace is decisive.
+    pub decisive: bool,
+}
+
+/// A full evaluation trace: every rule, in evaluation order, plus the final outcome.
+///
+/// Where [`Engine::eval`] short-circuits on the first match, [`Engine::trace`] evaluates
+/// *every* rule so a human can see exactly what did and didn't fire — the data behind
+/// `homn rule trace`.
+#[derive(Debug, Clone)]
+pub struct Trace {
+    /// Every rule, evaluated in deny → ask → allow order.
+    pub rules: Vec<RuleTrace>,
+    /// The decision the engine reached (the decisive rule, or default-ask if none matched).
+    pub outcome: Outcome,
+}
+
 /// Per-tool-call evaluation context, bound into Rhai's scope.
 #[derive(Debug, Clone, Default)]
 pub struct EvalRequest {
@@ -158,6 +187,46 @@ impl Engine {
             }
         }
         Outcome::default_ask()
+    }
+
+    /// Evaluate a [`RuleSet`] like [`eval`](Self::eval), but without short-circuiting.
+    ///
+    /// Returns a [`Trace`]: every rule, in deny → ask → allow order, each tagged with whether
+    /// it matched and whether it was the decisive (first-match) rule. The reachable outcome is
+    /// identical to [`eval`](Self::eval) — `trace` exists so `homn rule trace` can show *why*.
+    pub fn trace(&self, rules: &RuleSet, req: &EvalRequest) -> Trace {
+        let ordered = rules
+            .deny_rules()
+            .map(|r| (Decision::Deny, r))
+            .chain(rules.ask_rules().map(|r| (Decision::Ask, r)))
+            .chain(rules.allow_rules().map(|r| (Decision::Allow, r)));
+
+        let mut traced = Vec::new();
+        let mut outcome: Option<Outcome> = None;
+
+        for (verb, rule) in ordered {
+            let matched = self.fires(rule, req);
+            // The first matching rule, in priority order, decides — and only it.
+            let decisive = matched && outcome.is_none();
+            if decisive {
+                outcome = Some(self.outcome(verb, rule));
+            }
+            traced.push(RuleTrace {
+                verb,
+                location: RuleSourceLocation {
+                    file: PathBuf::from(rule.file_name()),
+                    line: rule.line(),
+                },
+                source_text: rule.source_text().to_owned(),
+                matched,
+                decisive,
+            });
+        }
+
+        Trace {
+            rules: traced,
+            outcome: outcome.unwrap_or_else(Outcome::default_ask),
+        }
     }
 
     fn fires(&self, rule: &parse::CompiledRule, req: &EvalRequest) -> bool {
@@ -389,6 +458,132 @@ mod tests {
         let out3 = eng.eval(&rs, &r3);
         assert_eq!(out3.decision, Decision::Ask);
         assert!(out3.rule.is_none());
+    }
+
+    #[test]
+    fn all_shipped_sample_policies_parse() {
+        // Guard: every file in policies/ must parse cleanly. `include_str!` also makes this a
+        // compile-time check that the files still exist at the expected paths.
+        let eng = Engine::new();
+        for (name, src) in [
+            (
+                "default.rhai",
+                include_str!("../../../policies/default.rhai"),
+            ),
+            ("strict.rhai", include_str!("../../../policies/strict.rhai")),
+            (
+                "relaxed.rhai",
+                include_str!("../../../policies/relaxed.rhai"),
+            ),
+            (
+                "project-example.rhai",
+                include_str!("../../../policies/project-example.rhai"),
+            ),
+        ] {
+            RuleSet::parse(&eng, src, name)
+                .unwrap_or_else(|e| panic!("shipped policy `{name}` must parse: {e}"));
+        }
+    }
+
+    #[test]
+    fn default_policy_allows_the_normal_dev_loop() {
+        // Regression: an explicit `ask if true` catch-all shadowed every allow rule, because
+        // asks are evaluated before allows (deny -> ask -> allow). The shipped default.rhai
+        // must rely on the engine's *implicit* fallthrough-to-ask instead.
+        let eng = Engine::new();
+        let src = include_str!("../../../policies/default.rhai");
+        let rs = RuleSet::parse(&eng, src, "default.rhai").expect("default.rhai parses");
+
+        let build = req("Bash", "cargo build --release");
+        assert_eq!(
+            eng.eval(&rs, &build).decision,
+            Decision::Allow,
+            "`cargo build` is in the allow list — it must not be shadowed into ask"
+        );
+
+        let danger = req("Bash", "rm -rf /etc");
+        assert_eq!(
+            eng.eval(&rs, &danger).decision,
+            Decision::Deny,
+            "`rm -rf` outside /tmp is still denied"
+        );
+
+        // A genuinely unmatched call still falls through to ask — via the engine default,
+        // not a catch-all rule.
+        let unknown = req("Bash", "frobnicate the widget");
+        let out = eng.eval(&rs, &unknown);
+        assert_eq!(out.decision, Decision::Ask);
+        assert!(
+            out.rule.is_none(),
+            "unmatched ask comes from the implicit default"
+        );
+    }
+
+    #[test]
+    fn trace_reports_every_rule_and_marks_the_decisive_one() {
+        // T084: `homn rule trace` needs to see *all* rules, not just the winner.
+        let eng = Engine::new();
+        let src = r#"
+            deny if tool == "Bash" && cmd.contains("rm -rf");
+            allow if tool == "Bash";
+        "#;
+        let rs = ruleset(&eng, src);
+        let trace = eng.trace(&rs, &req("Bash", "ls -la"));
+
+        assert_eq!(trace.rules.len(), 2, "both rules appear in the trace");
+
+        let deny = &trace.rules[0];
+        assert_eq!(deny.verb, Decision::Deny);
+        assert!(!deny.matched, "the deny rule does not match `ls -la`");
+        assert!(!deny.decisive);
+
+        let allow = &trace.rules[1];
+        assert_eq!(allow.verb, Decision::Allow);
+        assert!(allow.matched, "the allow rule matches a Bash call");
+        assert!(allow.decisive, "the allow rule is the first (only) match");
+
+        assert_eq!(trace.outcome.decision, Decision::Allow);
+    }
+
+    #[test]
+    fn trace_first_match_in_priority_order_is_decisive() {
+        // A matching deny wins over a matching allow even when the allow is listed first.
+        let eng = Engine::new();
+        let src = r#"
+            allow if tool == "Bash";
+            deny if tool == "Bash" && cmd.contains("rm -rf");
+        "#;
+        let rs = ruleset(&eng, src);
+        let trace = eng.trace(&rs, &req("Bash", "rm -rf /x"));
+
+        assert_eq!(trace.outcome.decision, Decision::Deny);
+
+        let decisive: Vec<_> = trace.rules.iter().filter(|r| r.decisive).collect();
+        assert_eq!(decisive.len(), 1, "exactly one rule is decisive");
+        assert_eq!(decisive[0].verb, Decision::Deny);
+
+        // The allow rule still matched — it just lost on priority.
+        let allow = trace
+            .rules
+            .iter()
+            .find(|r| r.verb == Decision::Allow)
+            .expect("allow rule present");
+        assert!(allow.matched);
+        assert!(!allow.decisive);
+    }
+
+    #[test]
+    fn trace_with_no_match_falls_through_to_ask() {
+        let eng = Engine::new();
+        let rs = ruleset(&eng, r#"allow if tool == "Read";"#);
+        let trace = eng.trace(&rs, &req("WebFetch", ""));
+
+        assert_eq!(trace.outcome.decision, Decision::Ask);
+        assert!(trace.outcome.rule.is_none());
+        assert!(
+            trace.rules.iter().all(|r| !r.decisive),
+            "no rule is decisive when nothing matched"
+        );
     }
 
     // Budget-enforcement integration test deferred to R-004 criterion bench (see

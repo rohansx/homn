@@ -26,7 +26,7 @@ homn install --apply                   # merges into ~/.claude/settings.json wit
 # Write your policy
 mkdir -p ~/.config/homn/policies
 cat > ~/.config/homn/policies/default.rhai <<'EOF'
-// Conservative starting rules — copy from policies/example.rhai for the full set.
+// Conservative starting rules — copy policies/default.rhai for the full set.
 deny  if tool == "Bash" && cmd.contains("rm -rf") && !cwd.starts_with("/tmp");
 deny  if tool == "Bash" && cmd.matches("git push --force *");
 allow if tool == "Read" && path.starts_with(home);

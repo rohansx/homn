@@ -48,7 +48,7 @@ These are *open* research items. Each gets a yes/no answer before the correspond
 
 **Why it mattered**: We committed to ≤ 200 ms per call across all rules. If a realistic ruleset didn't fit, we'd either raise budgets or pre-compile rules.
 
-**Approach**: criterion benchmark against the shipped `policies/example.rhai` (~45 rules). See `crates/homn-policy/benches/eval.rs`.
+**Approach**: criterion benchmark against the shipped `policies/default.rhai` (~60 rules). See `crates/homn-policy/benches/eval.rs`.
 
 **Result** (CachyOS, Ryzen 7 7840HS, 2026-05-13):
 

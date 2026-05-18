@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::path::{Path, PathBuf};
+
 use clap::{Parser, Subcommand};
 
 /// homn — the homunculus for your coding agents.
@@ -346,10 +348,9 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(other) => {
-            anyhow::bail!(
-                "subcommand `{other:?}` is not implemented yet — see specs/001-policy-engine/tasks.md"
-            );
+        Some(Command::Rule { action }) => {
+            // T084 + rule CLI: list / edit / add / trace policy rules.
+            rule_command(action.unwrap_or(RuleAction::List)).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -556,5 +557,224 @@ fn clip(s: &str) -> String {
         s.to_owned()
     } else {
         format!("{}…", &s[..119])
+    }
+}
+
+// ===== `homn rule` ====================================================================
+
+/// Baked-in copy of the canonical starter policy. `homn rule edit` writes this when no
+/// policy file exists yet, so a fresh install is never staring at an empty file.
+const STARTER_POLICY: &str = include_str!("../../../policies/default.rhai");
+
+async fn rule_command(action: RuleAction) -> anyhow::Result<()> {
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+    let configured = config.policy.policies_dir.join("default.rhai");
+
+    match action {
+        RuleAction::List => {
+            let path = resolve_readable_policy(&configured)?;
+            let engine = homn_policy::Engine::new();
+            let rules = homn_policy::RuleSet::load(&engine, &path)
+                .map_err(|e| anyhow::anyhow!("failed to load {}: {e}", path.display()))?;
+            print_rule_list(&path, &rules);
+        }
+        RuleAction::Trace { tool, input } => {
+            let path = resolve_readable_policy(&configured)?;
+            let engine = homn_policy::Engine::new();
+            let rules = homn_policy::RuleSet::load(&engine, &path)
+                .map_err(|e| anyhow::anyhow!("failed to load {}: {e}", path.display()))?;
+            let cwd = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            let tool_input = tool_input_from_str(&tool, &input);
+            let req = homn_policy::EvalRequest::from_tool_call(&tool, &tool_input, &cwd);
+            print_trace(&path, &tool, &input, &engine.trace(&rules, &req));
+        }
+        RuleAction::Add { rule } => {
+            // Validate before touching the file — a rule that doesn't parse never lands.
+            let engine = homn_policy::Engine::new();
+            homn_policy::RuleSet::parse(&engine, &rule, "default.rhai")
+                .map_err(|e| anyhow::anyhow!("refusing to add — rule does not parse: {e}"))?;
+            if let Some(parent) = configured.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut text = std::fs::read_to_string(&configured).unwrap_or_default();
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            let today = chrono::Local::now().format("%Y-%m-%d");
+            text.push_str(&format!(
+                "\n// added via `homn rule add` on {today}\n{rule}\n"
+            ));
+            std::fs::write(&configured, text)?;
+            eprintln!("appended to {}:", configured.display());
+            eprintln!("  {rule}");
+            eprintln!("(a running daemon hot-reloads the change within ~50ms)");
+        }
+        RuleAction::Edit => {
+            if !configured.exists() {
+                if let Some(parent) = configured.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&configured, STARTER_POLICY)?;
+                eprintln!("seeded {} with the starter policy", configured.display());
+            }
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+            let status = std::process::Command::new(&editor)
+                .arg(&configured)
+                .status()
+                .map_err(|e| anyhow::anyhow!("failed to launch $EDITOR ({editor}): {e}"))?;
+            if !status.success() {
+                anyhow::bail!("$EDITOR ({editor}) exited with a failure status");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the policy file to read: the configured path, else a repo-local sample (handy
+/// when running from a checkout), else a helpful error.
+fn resolve_readable_policy(configured: &Path) -> anyhow::Result<PathBuf> {
+    if configured.exists() {
+        return Ok(configured.to_path_buf());
+    }
+    let repo_local = PathBuf::from("policies/default.rhai");
+    if repo_local.exists() {
+        return Ok(repo_local);
+    }
+    anyhow::bail!(
+        "no policy file found\n  expected: {}\n  fix:      run `homn rule edit` to create one",
+        configured.display(),
+    )
+}
+
+/// Build a `tool_input` JSON object from a CLI string. Accepts explicit JSON, otherwise wraps
+/// the string under the key the tool expects (`command` / `path` / `url`).
+fn tool_input_from_str(tool: &str, input: &str) -> serde_json::Value {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(input) {
+        if v.is_object() {
+            return v;
+        }
+    }
+    let key = match tool {
+        "Read" | "Edit" | "Write" | "NotebookEdit" => "path",
+        "WebFetch" | "WebSearch" => "url",
+        _ => "command",
+    };
+    serde_json::json!({ key: input })
+}
+
+fn print_rule_list(path: &Path, rules: &homn_policy::RuleSet) {
+    let tty = is_terminal::IsTerminal::is_terminal(&std::io::stdout());
+    let s = if tty { Style::ansi() } else { Style::plain() };
+
+    let deny: Vec<(u32, String)> = rules
+        .deny_rules()
+        .map(|r| (r.line(), r.source_text().to_owned()))
+        .collect();
+    let ask: Vec<(u32, String)> = rules
+        .ask_rules()
+        .map(|r| (r.line(), r.source_text().to_owned()))
+        .collect();
+    let allow: Vec<(u32, String)> = rules
+        .allow_rules()
+        .map(|r| (r.line(), r.source_text().to_owned()))
+        .collect();
+
+    println!();
+    println!("  {}policy:{} {}", s.dim, s.reset, path.display());
+    println!(
+        "  {}{} deny · {} ask · {} allow{}",
+        s.dim,
+        deny.len(),
+        ask.len(),
+        allow.len(),
+        s.reset,
+    );
+    print_verb_group("DENY", s.red, &s, &deny);
+    print_verb_group("ASK", s.yellow, &s, &ask);
+    print_verb_group("ALLOW", s.green, &s, &allow);
+    println!();
+}
+
+fn print_verb_group(label: &str, color: &str, s: &Style, rules: &[(u32, String)]) {
+    if rules.is_empty() {
+        return;
+    }
+    println!();
+    println!("  {}{}{}", color, label, s.reset);
+    for (line, text) in rules {
+        println!("    {}{:>3}{}  {}", s.dim, line, s.reset, text);
+    }
+}
+
+fn print_trace(path: &Path, tool: &str, input: &str, trace: &homn_policy::Trace) {
+    let tty = is_terminal::IsTerminal::is_terminal(&std::io::stdout());
+    let s = if tty { Style::ansi() } else { Style::plain() };
+
+    println!();
+    println!(
+        "  {}trace{}  {}{}{}: {}",
+        s.cyan, s.reset, s.cyan, tool, s.reset, input,
+    );
+    println!("  {}policy: {}{}", s.dim, path.display(), s.reset);
+    println!();
+
+    for rt in &trace.rules {
+        let (vcolor, verb) = verb_style(rt.verb, &s);
+        let marker = if rt.matched {
+            format!("{}● match {}", vcolor, s.reset)
+        } else {
+            format!("{}○       {}", s.dim, s.reset)
+        };
+        let decisive = if rt.decisive {
+            format!("  {}← decides{}", vcolor, s.reset)
+        } else {
+            String::new()
+        };
+        // Dim rules that didn't fire so the eye lands on the ones that did.
+        let (tp, tr) = if rt.matched {
+            ("", "")
+        } else {
+            (s.dim, s.reset)
+        };
+        println!(
+            "  {marker}  {vcolor}{verb:<5}{reset} {dim}{file}:{line}{reset}  {tp}{text}{tr}{decisive}",
+            vcolor = vcolor,
+            reset = s.reset,
+            dim = s.dim,
+            file = rt.location.file.display(),
+            line = rt.location.line,
+            text = rt.source_text,
+        );
+    }
+
+    println!();
+    let (dcolor, decision) = verb_style(trace.outcome.decision, &s);
+    match &trace.outcome.rule {
+        Some(loc) => println!(
+            "  decision: {}{}{}  (matched {}:{})",
+            dcolor,
+            decision.to_uppercase(),
+            s.reset,
+            loc.file.display(),
+            loc.line,
+        ),
+        None => println!(
+            "  decision: {}{}{}  (no rule matched — default ask)",
+            dcolor,
+            decision.to_uppercase(),
+            s.reset,
+        ),
+    }
+    println!();
+}
+
+fn verb_style(d: homn_types::Decision, s: &Style) -> (&'static str, &'static str) {
+    match d {
+        homn_types::Decision::Deny => (s.red, "deny"),
+        homn_types::Decision::Ask => (s.yellow, "ask"),
+        homn_types::Decision::Allow => (s.green, "allow"),
     }
 }

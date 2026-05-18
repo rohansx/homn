@@ -62,12 +62,16 @@ homn install
 
 ## Step 3 — Write a policy
 
-The repo ships a starter ruleset at [`policies/example.rhai`](../policies/example.rhai). Copy it:
+The repo ships a starter ruleset at [`policies/default.rhai`](../policies/default.rhai), plus
+two alternative profiles — [`strict.rhai`](../policies/strict.rhai) (locked down) and
+[`relaxed.rhai`](../policies/relaxed.rhai) (trusted projects). Copy whichever fits:
 
 ```sh
 mkdir -p ~/.config/homn/policies
-cp policies/example.rhai ~/.config/homn/policies/default.rhai
+cp policies/default.rhai ~/.config/homn/policies/default.rhai
 ```
+
+Or just run `homn rule edit` — it seeds `default.rhai` for you and opens it in `$EDITOR`.
 
 Or write your own from scratch — the DSL is documented in [`docs/technical/policy-language.md`](technical/policy-language.md).
 

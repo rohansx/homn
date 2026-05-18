@@ -1,6 +1,6 @@
 //! Criterion benchmarks for the policy engine (T087 — closes R-004).
 //!
-//! Measures three scenarios against the shipped `policies/example.rhai` ruleset (~45 rules,
+//! Measures three scenarios against the shipped `policies/default.rhai` ruleset (~60 rules,
 //! representative of what a real user would write):
 //!
 //! - **early_deny**: a Bash call that matches the first deny rule. Best-case for the deny path.
@@ -15,7 +15,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use homn_policy::{Engine, EvalRequest, RuleSet};
 
-const EXAMPLE_POLICY: &str = include_str!("../../../policies/example.rhai");
+const DEFAULT_POLICY: &str = include_str!("../../../policies/default.rhai");
 
 fn base_request() -> EvalRequest {
     EvalRequest {
@@ -25,13 +25,13 @@ fn base_request() -> EvalRequest {
     }
 }
 
-fn parse_example_ruleset(engine: &Engine) -> RuleSet {
-    RuleSet::parse(engine, EXAMPLE_POLICY, "example.rhai").expect("example.rhai parses")
+fn parse_default_ruleset(engine: &Engine) -> RuleSet {
+    RuleSet::parse(engine, DEFAULT_POLICY, "default.rhai").expect("default.rhai parses")
 }
 
 fn bench_eval(c: &mut Criterion) {
     let engine = Engine::new();
-    let rules = parse_example_ruleset(&engine);
+    let rules = parse_default_ruleset(&engine);
 
     let early_deny = EvalRequest {
         tool: "Bash".into(),
@@ -82,8 +82,8 @@ fn bench_eval(c: &mut Criterion) {
 
 fn bench_parse(c: &mut Criterion) {
     let engine = Engine::new();
-    c.bench_function("parse_example_ruleset", |b| {
-        b.iter(|| RuleSet::parse(&engine, black_box(EXAMPLE_POLICY), "example.rhai").unwrap())
+    c.bench_function("parse_default_ruleset", |b| {
+        b.iter(|| RuleSet::parse(&engine, black_box(DEFAULT_POLICY), "default.rhai").unwrap())
     });
 }
 

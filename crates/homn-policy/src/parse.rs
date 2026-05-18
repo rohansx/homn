@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn comment_stripper_preserves_double_slash_inside_strings() {
-        // Regression: example.rhai had `url.regex("^https?://...")` which crashed the
+        // Regression: default.rhai has `url.regex("^https?://...")` which crashed the
         // parser when strip_comment naively cut at the first `//`.
         let eng = Engine::new();
         let src =
