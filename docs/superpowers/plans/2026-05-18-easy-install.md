@@ -982,7 +982,9 @@ echo "homn install: verifying checksum"
   || { echo "homn install: CHECKSUM MISMATCH — aborting" >&2; exit 1; }
 
 # --- install ----------------------------------------------------------------
-tar -xzf "$TMP/$ASSET" -C "$TMP"
+# The release tarball wraps everything in a top-level homn-<tag>-<triple>/ dir;
+# --strip-components=1 drops it so the binary lands directly at $TMP/homn.
+tar -xzf "$TMP/$ASSET" -C "$TMP" --strip-components=1
 mkdir -p "$BIN_DIR"
 mv "$TMP/homn" "$BIN_DIR/homn"
 chmod +x "$BIN_DIR/homn"
