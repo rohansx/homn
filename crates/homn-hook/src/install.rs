@@ -185,7 +185,14 @@ fn is_homn_entry(v: &Value) -> bool {
 }
 
 /// True if a `PermissionRequest` entry is one homn installed.
+/// Matches by the `_homn` marker field (set by `--apply`) or by a command
+/// containing `"homn hook"` (set by hand-added entries).
 fn entry_is_homn(entry: &Value) -> bool {
+    // Check the `_homn` marker field first (install path stamps this).
+    if entry.get("_homn").and_then(|m| m.as_str()) == Some(HOMN_MARKER) {
+        return true;
+    }
+    // Fall back to command-string match for hand-added entries.
     entry
         .get("hooks")
         .and_then(|h| h.as_array())
@@ -365,6 +372,31 @@ mod tests {
             !remove_homn_entry(&mut settings),
             "second removal is a no-op (idempotent)"
         );
+    }
+
+    #[test]
+    fn remove_homn_entry_drops_marker_stamped_entry() {
+        // Entries installed by `homn install --apply` carry the `_homn` marker field.
+        // entry_is_homn must match by marker alone (without relying on the command string).
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PermissionRequest": [
+                    { "matcher": "other", "hooks": [
+                        { "type": "command", "command": "other-hook" } ] },
+                    {
+                        "matcher": "*",
+                        "_homn": "/* installed by homn */",
+                        "hooks": [
+                            { "type": "command", "command": "/custom/path/to/homn-wrapper", "timeout": 30000 }
+                        ]
+                    }
+                ]
+            }
+        });
+        assert!(remove_homn_entry(&mut settings), "marker-stamped entry is removed even when command doesn't contain 'homn hook'");
+        let arr = settings["hooks"]["PermissionRequest"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "unrelated hook survives");
+        assert_eq!(arr[0]["hooks"][0]["command"], "other-hook");
     }
 
     #[test]
