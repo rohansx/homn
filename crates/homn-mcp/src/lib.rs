@@ -21,6 +21,10 @@
 
 #![warn(missing_docs)]
 
+mod rate_limit;
+
+pub use rate_limit::{RateLimited, RateLimiter, DEFAULT_MAX_PER_WINDOW, DEFAULT_WINDOW};
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -102,15 +106,30 @@ pub struct HomnMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     state: McpState,
+    /// Per-session quota — one server per stdio session, so one limiter is per-session (T079).
+    rate_limiter: RateLimiter,
 }
 
 impl HomnMcpServer {
-    /// Construct from shared state.
+    /// Construct from shared state, using the default rate limit (100 calls / 60 s).
     pub fn new(state: McpState) -> Self {
+        Self::with_rate_limiter(state, RateLimiter::with_defaults())
+    }
+
+    /// Construct with an explicit rate limiter. Used by tests to exercise the quota cheaply.
+    pub fn with_rate_limiter(state: McpState, rate_limiter: RateLimiter) -> Self {
         Self {
             tool_router: Self::tool_router(),
             state,
+            rate_limiter,
         }
+    }
+
+    /// Charge one call against the per-session quota, mapping exhaustion to an MCP error.
+    fn enforce_rate_limit(&self) -> Result<(), McpError> {
+        self.rate_limiter
+            .check()
+            .map_err(|limited| McpError::invalid_request(limited.to_string(), None))
     }
 }
 
@@ -123,6 +142,7 @@ impl HomnMcpServer {
         &self,
         Parameters(args): Parameters<QueryPolicyArgs>,
     ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
         let started = Instant::now();
         let cwd = args.cwd.clone().unwrap_or_default();
         let eval_req = EvalRequest::from_tool_call(&args.tool, &args.tool_input, &cwd);
@@ -150,6 +170,7 @@ impl HomnMcpServer {
         &self,
         Parameters(args): Parameters<ExplainDecisionArgs>,
     ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
         match find_decision_by_id(&self.state.audit, args.decision_id).await {
             Ok(Some(row)) => Ok(CallToolResult::success(vec![Content::json(
                 record_to_json(&row),
@@ -172,6 +193,7 @@ impl HomnMcpServer {
         &self,
         Parameters(args): Parameters<RecentDecisionsArgs>,
     ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
         let limit = args.limit.clamp(1, 100);
         let decision = match args.decision.as_deref() {
             Some("allow") => Some(homn_types::Decision::Allow),
@@ -309,6 +331,35 @@ mod tests {
             rules: Arc::new(ArcSwap::from_pointee(rules)),
             audit,
         }
+    }
+
+    #[tokio::test]
+    async fn tool_calls_are_rate_limited_and_report_a_clear_error() {
+        // T079: the per-session quota is enforced at the tool boundary. With a quota of 2,
+        // the third call in the window returns an MCP error naming the rate limit.
+        use std::time::Duration;
+
+        let state = test_state(r#"deny if tool == "Bash" && cmd.contains("rm -rf");"#).await;
+        let server =
+            HomnMcpServer::with_rate_limiter(state, RateLimiter::new(2, Duration::from_secs(60)));
+        let call = || {
+            server.query_policy(Parameters(QueryPolicyArgs {
+                tool: "Bash".into(),
+                tool_input: serde_json::json!({ "command": "ls" }),
+                cwd: None,
+            }))
+        };
+
+        assert!(call().await.is_ok(), "call 1 is under quota");
+        assert!(call().await.is_ok(), "call 2 is under quota");
+
+        let third = call().await;
+        let err = third.expect_err("call 3 exceeds the quota of 2");
+        assert!(
+            err.message.to_lowercase().contains("rate limit"),
+            "the error names the rate limit: {}",
+            err.message,
+        );
     }
 
     #[tokio::test]
