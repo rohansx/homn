@@ -99,10 +99,11 @@ deny  if tool == "Bash" && cmd.matches("git push --force *");
 allow if tool == "Read" && path.starts_with(home);
 allow if tool == "Bash" && cmd.matches("npm run *");
 ask   if tool == "Bash" && cmd.matches("git push * main");   // for now, this means "let Claude prompt"
-ask   if true;                                                // default catch-all
 ```
 
-Evaluation order is deny → ask → allow; first matching rule wins. No match → default ask. See [docs/architecture/policy-engine.md](architecture/policy-engine.md) for the rationale.
+Evaluation order is deny → ask → allow; first matching rule wins. No match → default ask
+— so you never need an explicit `ask if true` catch-all (and shouldn't add one: asks run
+before allows, so a catch-all `ask` would shadow every `allow` rule). See [docs/architecture/policy-engine.md](architecture/policy-engine.md) for the rationale.
 
 ## Step 4 — Run the daemon
 
