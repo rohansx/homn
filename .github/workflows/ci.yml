@@ -54,6 +54,25 @@ jobs:
       - name: Run shellcheck
         run: shellcheck install.sh
 
+  face-build:
+    name: build homn-face (Tauri 2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri 2 system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build homn-face
+        run: cargo build -p homn-face --locked
+      - name: Config-parse test
+        run: cargo test -p homn-face --test config --locked
+
   msrv:
     name: MSRV (1.83)
     runs-on: ubuntu-latest
