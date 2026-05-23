@@ -53,3 +53,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# tauri build output — gen/schemas/ is regenerated on every build by tauri-build
+crates/homn-face/gen/

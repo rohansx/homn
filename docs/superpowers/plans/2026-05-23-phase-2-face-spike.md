@@ -22,7 +22,9 @@
 | `crates/homn-face/tauri.conf.json` | Create | Window config: 200×120, transparent, alwaysOnTop, frameless, skipTaskbar |
 | `crates/homn-face/src/main.rs` | Create | Tauri runtime entry — `Builder::default().run(generate_context!())` |
 | `crates/homn-face/dist/index.html` | Create | Static frontend — transparent body, centered `<pre>` with `◕ ◡ ◕` |
+| `crates/homn-face/icons/icon.png` | Create | Tauri 2's `generate_context!()` hard-requires an RGBA `icons/icon.png` at compile time. A minimal 32×32 transparent RGBA PNG is sufficient for the spike. |
 | `crates/homn-face/tests/config.rs` | Create | Regression guard — assert `tauri.conf.json` parses with the expected window keys |
+| `.gitignore` | Modify | Add `crates/homn-face/gen/` — `tauri-build` regenerates JSON schemas on every build; tracking them creates 4500 lines of build-output noise and merge conflicts on regen. |
 | `.github/workflows/ci.yml` | Modify | Add a `face-build` job that apt-installs webkit2gtk-4.1 and runs `cargo build -p homn-face` |
 | `docs/architecture/face.md` | Modify | Append a "Spike results" subsection with the observed outcomes against the 5 acceptance criteria |
 
