@@ -27,9 +27,32 @@ fn tauri_conf_json_parses_with_expected_window_keys() {
         );
     }
 
-    assert_eq!(win["transparent"], Value::Bool(true), "transparent must be true");
-    assert_eq!(win["alwaysOnTop"], Value::Bool(true), "alwaysOnTop must be true");
-    assert_eq!(win["decorations"], Value::Bool(false), "decorations must be false");
+    assert_eq!(
+        win["transparent"],
+        Value::Bool(true),
+        "transparent must be true"
+    );
+    assert_eq!(
+        win["alwaysOnTop"],
+        Value::Bool(true),
+        "alwaysOnTop must be true"
+    );
+    assert_eq!(
+        win["decorations"],
+        Value::Bool(false),
+        "decorations must be false"
+    );
     assert_eq!(win["width"], Value::from(200), "width must be 200");
     assert_eq!(win["height"], Value::from(120), "height must be 120");
+    assert_eq!(
+        win["resizable"],
+        Value::Bool(false),
+        "resizable must be false"
+    );
+    assert_eq!(
+        win["skipTaskbar"],
+        Value::Bool(true),
+        "skipTaskbar must be true"
+    );
+    assert_eq!(win["title"], Value::from("homn"), "title must be \"homn\"");
 }
