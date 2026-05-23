@@ -1,0 +1,18 @@
+[package]
+name          = "homn-face"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+authors       = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+description   = "Tauri-backed always-on-top ASCII face window for homn (Phase 2)."
+
+[build-dependencies]
+tauri-build   = { workspace = true }
+
+[dependencies]
+tauri         = { workspace = true }
+
+[dev-dependencies]
+serde_json    = { workspace = true }

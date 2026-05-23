@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/homn-bin",
     "crates/homn-daemon",
+    "crates/homn-face",
     "crates/homn-policy",
     "crates/homn-audit",
     "crates/homn-hook",
@@ -35,6 +36,11 @@ homn-tui       = { path = "crates/homn-tui", version = "0.1.0" }
 homn-mcp       = { path = "crates/homn-mcp", version = "0.1.0" }
 homn-learning  = { path = "crates/homn-learning", version = "0.1.0" }
 homn-daemon    = { path = "crates/homn-daemon", version = "0.1.0" }
+homn-face      = { path = "crates/homn-face", version = "0.1.0" }
+
+# Tauri 2 — pinned in workspace so all crates share the same version
+tauri          = { version = "2", features = [] }
+tauri-build    = { version = "2", features = [] }
 
 # Common ecosystem deps
 tokio          = { version = "1", features = ["full"] }
