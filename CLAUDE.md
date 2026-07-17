@@ -1,15 +1,17 @@
 <!-- SPECKIT START -->
 # homn — guidance for AI coding agents working in this repo
 
-**Active spec**: [`specs/001-policy-engine/`](./specs/001-policy-engine/) — Phase 1 (the policy engine MVP).
+**Active spec**: [`specs/002-ambient-memory/`](./specs/002-ambient-memory/) — homn v2, the local human (ambient memory v1, Phases 0–3). Supersedes 001 as the active work; [`specs/001-policy-engine/`](./specs/001-policy-engine/) remains the shipped record of the v1 policy engine (absorbed as the governance layer).
 
 Read in this order when picking up work:
 
 1. [`.specify/memory/constitution.md`](./.specify/memory/constitution.md) — non-negotiable principles
-2. [`specs/001-policy-engine/spec.md`](./specs/001-policy-engine/spec.md) — what we're building (user stories P1–P5)
-3. [`specs/001-policy-engine/plan.md`](./specs/001-policy-engine/plan.md) — how (with constitution gate checks)
-4. [`specs/001-policy-engine/tasks.md`](./specs/001-policy-engine/tasks.md) — the actual task list, grouped by user story
-5. [`specs/001-policy-engine/quickstart.md`](./specs/001-policy-engine/quickstart.md) — how to run + test locally
+2. [`docs/v2/`](./docs/v2/) — the pivot: product-overview, architecture, tech-plan (source of truth)
+3. [`specs/002-ambient-memory/spec.md`](./specs/002-ambient-memory/spec.md) — what we're building (user stories US1–US7, the five invariants)
+4. [`specs/002-ambient-memory/plan.md`](./specs/002-ambient-memory/plan.md) — how (with constitution gate checks + phase sequencing)
+5. [`specs/002-ambient-memory/research.md`](./specs/002-ambient-memory/research.md) · [`data-model.md`](./specs/002-ambient-memory/data-model.md) · [`contracts/`](./specs/002-ambient-memory/contracts/) — decisions, entities, interface contracts
+6. [`specs/002-ambient-memory/tasks.md`](./specs/002-ambient-memory/tasks.md) — the task list, grouped by user story
+7. [`specs/002-ambient-memory/quickstart.md`](./specs/002-ambient-memory/quickstart.md) — how to run + eval locally
 
 Long-form architecture and rationale live in [`docs/`](./docs/) and [`docs/architecture/adr/`](./docs/architecture/adr/). Don't duplicate; reference.
 
