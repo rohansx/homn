@@ -1,0 +1,68 @@
+# Phase 0 recall eval — question set TEMPLATE
+#
+# Copy to eval/questions/<YYYY-MM-DD>.toml and fill from YOUR actual captured week.
+# The loader (homn-eval, task T012) REQUIRES exactly 10 factual + 10 temporal + 10 commitment.
+#
+# Fields per question:
+#   id           unique within the set, e.g. "f01", "t01", "c01"
+#   kind         "factual" | "temporal" | "commitment"
+#   question     the natural-language cue you'd ask Claude
+#   expected_ref ground-truth anchor the scorer looks for in top-k hits:
+#                an observation id, a distinctive phrase, or a "who+what+when" string
+#   notes        optional — hand-scoring guidance when auto-match is ambiguous
+
+[meta]
+captured_week = "YYYY-MM-DD/YYYY-MM-DD"   # start/end of the capture window
+authored_by   = "you"
+k             = 3
+
+# ── 10 FACTUAL ─────────────────────────────────────────────────────────────
+# "who sent the screenshot about the bug", "what URL was the pricing doc at"
+[[question]]
+id = "f01"
+kind = "factual"
+question = ""
+expected_ref = ""
+notes = ""
+
+[[question]]
+id = "f02"
+kind = "factual"
+question = ""
+expected_ref = ""
+
+# f03 … f10 — add eight more factual questions (10 total)
+
+# ── 10 TEMPORAL ────────────────────────────────────────────────────────────
+# "what did I decide about X on Tuesday", "what was I working on before the standup"
+[[question]]
+id = "t01"
+kind = "temporal"
+question = ""
+expected_ref = ""
+notes = ""
+
+[[question]]
+id = "t02"
+kind = "temporal"
+question = ""
+expected_ref = ""
+
+# t03 … t10 — add eight more temporal questions (10 total)
+
+# ── 10 COMMITMENT / BELIEF ─────────────────────────────────────────────────
+# "what did I promise Chris", "how did my pitch framing change since March"
+[[question]]
+id = "c01"
+kind = "commitment"
+question = ""
+expected_ref = ""
+notes = ""
+
+[[question]]
+id = "c02"
+kind = "commitment"
+question = ""
+expected_ref = ""
+
+# c03 … c10 — add eight more commitment/belief questions (10 total)
