@@ -87,6 +87,17 @@ Tests-first applies (Constitution VI: this is policy/audit territory).
 
 *Est: 2 weeks. → Ship.*
 
+## Phase 3.5 — account connectors (post-launch, pre-proactive-loop)
+
+The OpenHuman-inspired layer, and the highest-signal-per-byte source in the design: email and Slack are where commitments live in **explicit text** — clean prose, real timestamps, real sender identity — versus OCR soup from the screen. Cheap to build (the `Source` trait and `Observation.source` variants `Email | Slack` already accommodate it) and it directly strengthens `commitments()` and `whodis()` before Phase 4's whisper loop depends on them.
+
+- `GmailSource`, `SlackSource`, `GitHubSource` impls of the Phase 1 `Source` trait — poll-based, read-only scopes, incremental cursors (history id / `oldest` ts / events API).
+- OAuth tokens in the system keyring (same pattern convox-voice already uses); no homn cloud component — each connector talks to the provider directly from the daemon.
+- Everything passes the same gate: third-party PII policy applies to senders/recipients; per-account exclusion (`homn exclude gmail:work@…`) rides the existing deny-list UX.
+- Sessionizer treats a thread / channel-day as the session boundary, so consolidation mints "the pricing thread with Chris" as an episode.
+
+*Est: 1–2 weeks (one connector ≈ 3 days once the first lands). Order by eval failures from Phase 3 — build the connector whose absence loses the most `commitments()` questions first.*
+
 ## Phase 4 — proactive loop (v2 begins; only after launch signal)
 
 - Meeting detector → live transcript stream (convox-voice ASR) → per-utterance: primd predictive retrieval against agidb → local triage model scores "is there a suggestion worth making?" → above threshold, one Claude call composes the whisper.

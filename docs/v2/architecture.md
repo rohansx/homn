@@ -25,7 +25,7 @@ v0.2 · 2026-07-17 · companion to [`product-overview.md`](./product-overview.md
 ├─────────────────────────────────────────────────────────────┤
 │  L1  SENSES      screenpipe (screen OCR + a11y tree + app   │
 │                  events) · convox-voice ASR (working today) │
-│                  account connectors (gmail/slack/gh) later  │
+│                  account connectors (gmail/slack/gh) — 3.5  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
