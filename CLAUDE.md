@@ -17,7 +17,7 @@ Long-form architecture and rationale live in [`docs/`](./docs/) and [`docs/archi
 
 ## Technologies
 
-- **Language**: Rust stable (1.85+).
+- **Language**: Rust stable (1.88+).
 - **Async runtime**: Tokio (only).
 - **Storage**: SQLite via `rusqlite` + `tokio-rusqlite`.
 - **Policy DSL**: Rhai with hard wall-clock budgets.

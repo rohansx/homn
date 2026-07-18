@@ -28,7 +28,7 @@ daemon. The rest of this page covers the manual, step-by-step path and how each 
 
 ## Prerequisites
 
-- Rust stable (1.85+) — `rustup default stable`.
+- Rust stable (1.88+) — `rustup default stable`.
 - Claude Code installed and working.
 - `~/.config` and `~/.local/share` writable (standard XDG).
 
