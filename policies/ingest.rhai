@@ -58,7 +58,10 @@ if app.matches("Zoom*") || source_kind == "ambient_audio" || source_kind == "dic
 }
 
 // ============================================================================
-// ALLOW — everything else, subject to the always-on secrets scan.
+// ALLOW — everything else falls through to the engine default (FR-026):
+// deny for incognito/vault contexts, allow otherwise, never AllowCloud.
+//
+// Do NOT add an unconditional allow()/allow_with() here: outcome calls use
+// last-call-wins semantics, so a trailing allow would overwrite every deny
+// and redact above and the whole policy would fail open.
 // ============================================================================
-
-allow_with("default.allow");
