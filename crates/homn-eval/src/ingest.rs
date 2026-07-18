@@ -53,6 +53,10 @@ pub struct IngestConfig {
     pub ocr: SourceOverride,
     /// Audio transcription source.
     pub audio: SourceOverride,
+    /// Optional convox-voice `dictation.jsonl` path. `None` auto-discovers
+    /// `~/.local/share/convox-voice/dictation.jsonl` (the intentional, push-to-talk speech
+    /// sense — far cleaner than ambient mic capture, which is background-media noise).
+    pub dictation_path: Option<PathBuf>,
 }
 
 /// Errors from reading or replaying a capture DB.
@@ -154,6 +158,9 @@ pub fn read_rows(
     }
     if let Some(rows) = read_audio(&conn, &cfg.audio)? {
         out.push(("audio", rows));
+    }
+    if let Some(rows) = read_dictation(cfg)? {
+        out.push(("dictation", rows));
     }
 
     if out.is_empty() {
@@ -272,6 +279,55 @@ fn read_audio(
     }
 
     Ok(None)
+}
+
+/// Read convox-voice's `dictation.jsonl` (one `{"ts","text"}` per line) into rows. Each line is
+/// one intentional, push-to-talk utterance → one row. `app` is `"dictation"`; the minute bucket
+/// comes from the `ts` field. Auto-discovers the default path when `cfg.dictation_path` is None.
+fn read_dictation(cfg: &IngestConfig) -> Result<Option<Vec<RawRow>>, IngestError> {
+    let path: PathBuf = match cfg.dictation_path.clone() {
+        Some(p) => p,
+        None => {
+            // ~/.local/share/convox-voice/dictation.jsonl (XDG data home, with fallback).
+            let base = std::env::var("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share")
+                });
+            base.join("convox-voice").join("dictation.jsonl")
+        }
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| IngestError::Sqlite(format!("read {}: {e}", path.display())))?;
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue, // skip malformed lines (fail closed per-row, not whole-file)
+        };
+        let body = v.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+        if body.is_empty() {
+            continue;
+        }
+        let ts = v.get("ts").and_then(|t| t.as_str()).unwrap_or("");
+        let minute = minute_key(&SqlValue::Text(ts.to_owned())).unwrap_or_default();
+        if minute.is_empty() {
+            continue;
+        }
+        rows.push(RawRow {
+            app: "dictation".to_owned(),
+            minute,
+            text: body.to_owned(),
+        });
+    }
+    Ok(Some(rows))
 }
 
 /// Run `sql` and collect rows where the mapper returns `Some`.
@@ -571,6 +627,7 @@ mod tests {
                 app_col: Some("program".to_owned()),
             },
             audio: SourceOverride::default(),
+            dictation_path: None,
         };
         let sources = read_chunks(&db, &cfg).unwrap();
         let ocr = sources
@@ -580,6 +637,40 @@ mod tests {
         assert_eq!(ocr.1[0].app, "Zed");
         assert_eq!(ocr.1[0].text, "custom text");
         let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn read_dictation_parses_convox_voice_jsonl() {
+        let path =
+            std::env::temp_dir().join(format!("homn-eval-dictation-{}.jsonl", std::process::id()));
+        std::fs::write(
+            &path,
+            "{\"ts\":\"2026-07-18T19:04:28+00:00\",\"text\":\"ship the eval gate today\"}\n\
+             {\"ts\":\"2026-07-18T19:05:00+00:00\",\"text\":\"\"}\n\
+             not-json-at-all\n\
+             {\"ts\":\"2026-07-18T19:06:30+00:00\",\"text\":\"  spliced words  \"}\n",
+        )
+        .unwrap();
+        let cfg = IngestConfig {
+            dictation_path: Some(path.clone()),
+            ..Default::default()
+        };
+        let rows = read_dictation(&cfg).unwrap().expect("parsed some rows");
+        assert_eq!(rows.len(), 2, "blank + malformed lines skipped");
+        assert_eq!(rows[0].app, "dictation");
+        assert_eq!(rows[0].minute, "2026-07-18T19:04");
+        assert_eq!(rows[0].text, "ship the eval gate today");
+        assert_eq!(rows[1].text, "spliced words", "trimmed");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_dictation_returns_none_when_path_absent() {
+        let cfg = IngestConfig {
+            dictation_path: Some(std::env::temp_dir().join("homn-eval-nope-does-not-exist.jsonl")),
+            ..Default::default()
+        };
+        assert!(read_dictation(&cfg).unwrap().is_none());
     }
 
     #[test]

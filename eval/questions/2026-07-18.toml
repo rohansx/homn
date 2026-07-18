@@ -1,0 +1,212 @@
+# Phase 0 recall eval — question set authored from the actual captured week.
+#
+# Captured window: 2026-07-18, ~13:39–14:24 UTC (screenpipe running ~45 min).
+# Capture contents at gate time:
+#   - screen OCR: a static Konsole "File" menu (File / New Window / New Tab / Built-in /
+#     Default profile / Clone Tab / Save Output As / Auto Save Output As), 12 identical frames.
+#   - audio: 168 transcriptions of background media (a YouTube video) via the mic — phrases
+#     like "if you want to do something like this, you can do it", "use a free machine for a
+#     long time", "make a balance between the two step", "one of the best moments to do",
+#     "all our music", "I'm gonna go to the next one", "try to do this by yourself".
+#
+# CAVEAT: this is a thin, non-representative sample (~45 min; no real work activity on screen;
+# audio is background media, not the user's speech). The recall@3 number this set produces is a
+# *pipeline validation on real capture*, NOT a brain-architecture decision. The verdict is
+# deferred until a real 5–7 day working week with intentional dictation (see research.md R1).
+#
+# Questions are grounded in the actual captured text; expected_ref is a distinctive phrase that
+# appears in a captured chunk (the scorer's substring fallback matches on hit text).
+
+[meta]
+captured_week = "2026-07-18/2026-07-18"
+authored_by = "homn-phase0"
+k = 3
+
+# ── 10 FACTUAL ─────────────────────────────────────────────────────────────
+
+[[question]]
+id = "f01"
+kind = "factual"
+question = "what tab option was in the file menu"
+expected_ref = "Clone Tab"
+
+[[question]]
+id = "f02"
+kind = "factual"
+question = "what save option was visible"
+expected_ref = "Save Output As"
+
+[[question]]
+id = "f03"
+kind = "factual"
+question = "which profile was the default"
+expected_ref = "Default profile"
+
+[[question]]
+id = "f04"
+kind = "factual"
+question = "was there an auto save option"
+expected_ref = "Auto Save Output"
+
+[[question]]
+id = "f05"
+kind = "factual"
+question = "what did the background audio say about doing something"
+expected_ref = "if you want to do something like this, you can do it"
+
+[[question]]
+id = "f06"
+kind = "factual"
+question = "what did the audio say about a free machine"
+expected_ref = "use a free machine for a long time"
+
+[[question]]
+id = "f07"
+kind = "factual"
+question = "what was said about making a balance"
+expected_ref = "make a balance between the two step"
+
+[[question]]
+id = "f08"
+kind = "factual"
+question = "what did the audio say about the best moments"
+expected_ref = "one of the best moments to do"
+
+[[question]]
+id = "f09"
+kind = "factual"
+question = "what was said about music"
+expected_ref = "all our music"
+
+[[question]]
+id = "f10"
+kind = "factual"
+question = "what did the audio say about doing it by yourself"
+expected_ref = "try to do this by yourself"
+
+# ── 10 TEMPORAL ────────────────────────────────────────────────────────────
+
+[[question]]
+id = "t01"
+kind = "temporal"
+question = "what menu was on screen during the capture"
+expected_ref = "File"
+
+[[question]]
+id = "t02"
+kind = "temporal"
+question = "what window option appeared on screen"
+expected_ref = "New Window"
+
+[[question]]
+id = "t03"
+kind = "temporal"
+question = "what tab option appeared on screen"
+expected_ref = "New Tab"
+
+[[question]]
+id = "t04"
+kind = "temporal"
+question = "what was said about going to the next one"
+expected_ref = "I'm gonna go to the next one"
+
+[[question]]
+id = "t05"
+kind = "temporal"
+question = "what was the audio's let's go phrase"
+expected_ref = "let's go"
+
+[[question]]
+id = "t06"
+kind = "temporal"
+question = "what built-in option was on the screen menu"
+expected_ref = "Built-in"
+
+[[question]]
+id = "t07"
+kind = "temporal"
+question = "what was said earlier about a free machine"
+expected_ref = "free machine"
+
+[[question]]
+id = "t08"
+kind = "temporal"
+question = "what balance phrase came up"
+expected_ref = "balance between the two step"
+
+[[question]]
+id = "t09"
+kind = "temporal"
+question = "what was on screen before the audio about doing something"
+expected_ref = "Clone Tab"
+
+[[question]]
+id = "t10"
+kind = "temporal"
+question = "what best-moments phrase was spoken"
+expected_ref = "best moments to do"
+
+# ── 10 COMMITMENT ──────────────────────────────────────────────────────────
+# Framed as commitments/intent extracted from the spoken audio (the gate treats spoken text
+# as the commitment source). NOTE: the audio is background media, so these are not the user's
+# real commitments — they exercise the commitment-recall path mechanically, not semantically.
+
+[[question]]
+id = "c01"
+kind = "commitment"
+question = "what did the audio say you can do"
+expected_ref = "you can do it"
+
+[[question]]
+id = "c02"
+kind = "commitment"
+question = "what was the stated intent about doing something"
+expected_ref = "want to do something like this"
+
+[[question]]
+id = "c03"
+kind = "commitment"
+question = "what was said about doing it by yourself"
+expected_ref = "do this by yourself"
+
+[[question]]
+id = "c04"
+kind = "commitment"
+question = "what was the plan about the next one"
+expected_ref = "go to the next one"
+
+[[question]]
+id = "c05"
+kind = "commitment"
+question = "what was said about using a free machine"
+expected_ref = "use a free machine"
+
+[[question]]
+id = "c06"
+kind = "commitment"
+question = "what was the intent about being a little bit more"
+expected_ref = "gonna be a little bit more"
+
+[[question]]
+id = "c07"
+kind = "commitment"
+question = "what was said about the best moments"
+expected_ref = "best moments to do"
+
+[[question]]
+id = "c08"
+kind = "commitment"
+question = "what was the balance intent"
+expected_ref = "make a balance"
+
+[[question]]
+id = "c09"
+kind = "commitment"
+question = "what was said about trying to do this"
+expected_ref = "try to do this"
+
+[[question]]
+id = "c10"
+kind = "commitment"
+question = "what was the let's go intent"
+expected_ref = "let's go"

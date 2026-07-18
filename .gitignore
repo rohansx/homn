@@ -55,3 +55,7 @@ Thumbs.db
 !.env.example
 crates/homn-face/gen/
 pi-session-*.html
+
+# Phase 0 eval brains are large binary agidb stores — keep the results md, not the brain
+eval/results/*.agidb
+eval/results/*.agidb/**
