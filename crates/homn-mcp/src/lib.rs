@@ -21,8 +21,10 @@
 
 #![warn(missing_docs)]
 
+mod brain;
 mod rate_limit;
 
+pub use brain::{Brain, MemoryBrain, RecallHit, RecordingBrain, TimelineEntry};
 pub use rate_limit::{RateLimited, RateLimiter, DEFAULT_MAX_PER_WINDOW, DEFAULT_WINDOW};
 
 use std::sync::Arc;
@@ -45,6 +47,9 @@ pub struct McpState {
     pub rules: RuleSetHandle,
     /// Audit DB.
     pub audit: Arc<Db>,
+    /// The read-path memory for `recall` / `timeline` (v2). `None` when no brain is wired
+    /// (e.g. the v1 policy-only server); the tools then return a clear "no brain" error.
+    pub brain: Option<Arc<dyn Brain>>,
 }
 
 // ============================================================================
@@ -91,6 +96,39 @@ pub struct RecentDecisionsArgs {
 
 fn default_limit() -> u32 {
     10
+}
+
+/// Args for `recall` (v2: US2). `as_of` is an optional ISO-8601 datetime for bi-temporal recall.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RecallArgs {
+    /// The natural-language cue to recall against the local memory.
+    pub cue: String,
+    /// Optional bi-temporal bound: recall as the world was known at this ISO-8601 instant.
+    pub as_of: Option<String>,
+    /// Max hits to return. Defaults to 10, capped at 50.
+    #[serde(default = "default_recall_k")]
+    pub k: u32,
+}
+
+fn default_recall_k() -> u32 {
+    10
+}
+
+/// Args for `timeline` (v2: US2).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TimelineArgs {
+    /// The subject to trace: an entity name or topic phrase.
+    pub subject: String,
+    /// Inclusive start of the window (ISO-8601 datetime).
+    pub from: String,
+    /// Inclusive end of the window (ISO-8601 datetime).
+    pub to: String,
+}
+
+fn parse_iso(s: &str) -> Result<chrono::DateTime<chrono::Utc>, McpError> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|e| McpError::invalid_params(format!("invalid datetime `{s}`: {e}"), None))
 }
 
 // ============================================================================
@@ -225,6 +263,61 @@ impl HomnMcpServer {
             )),
         }
     }
+
+    #[tool(
+        description = "Recall from local memory. Returns ranked hits for a natural-language cue, each with provenance (source, app, captured_at, observation_id). Pure local math — no network call. Args: cue (string), as_of (optional ISO-8601 datetime — recall as the world was known then), k (optional, default 10)."
+    )]
+    async fn recall(
+        &self,
+        Parameters(args): Parameters<RecallArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let brain =
+            self.state.brain.as_ref().ok_or_else(|| {
+                McpError::internal_error("no brain wired into this MCP server", None)
+            })?;
+        let as_of = match args.as_of.as_deref() {
+            Some(s) => Some(parse_iso(s)?),
+            None => None,
+        };
+        let k = args.k.clamp(1, 50) as usize;
+        match brain.recall(&args.cue, as_of, k).await {
+            Ok(hits) => Ok(CallToolResult::success(vec![Content::json(hits)?])),
+            Err(err) => Err(McpError::internal_error(
+                format!("recall failed: {err}"),
+                None,
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Timeline of what happened for a subject (entity or topic) over a time window. Returns chronological entries with provenance. Pure local math — no network call. Args: subject (string), from (ISO-8601 datetime), to (ISO-8601 datetime)."
+    )]
+    async fn timeline(
+        &self,
+        Parameters(args): Parameters<TimelineArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let brain =
+            self.state.brain.as_ref().ok_or_else(|| {
+                McpError::internal_error("no brain wired into this MCP server", None)
+            })?;
+        let from = parse_iso(&args.from)?;
+        let to = parse_iso(&args.to)?;
+        if from > to {
+            return Err(McpError::invalid_params(
+                format!("`from` ({from}) must not be after `to` ({to})"),
+                None,
+            ));
+        }
+        match brain.timeline(&args.subject, from, to).await {
+            Ok(entries) => Ok(CallToolResult::success(vec![Content::json(entries)?])),
+            Err(err) => Err(McpError::internal_error(
+                format!("timeline failed: {err}"),
+                None,
+            )),
+        }
+    }
 }
 
 fn decision_str(d: homn_types::Decision) -> &'static str {
@@ -239,7 +332,9 @@ fn decision_str(d: homn_types::Decision) -> &'static str {
 impl ServerHandler for HomnMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "homn — local-first policy daemon for coding agents. \
+            "homn — the local human: memory, permissions, presence. \
+             Use `recall` to fetch ranked memories for a cue, and `timeline` to trace a subject \
+             over a window — both are local-only, every hit carries provenance. \
              Use `query_policy` to check what's allowed *before* attempting an action. \
              If a call was denied, use `explain_decision` to read the rule that fired. \
              Use `recent_decisions` to see what's happened recently.",
@@ -330,6 +425,7 @@ mod tests {
             engine,
             rules: Arc::new(ArcSwap::from_pointee(rules)),
             audit,
+            brain: None,
         }
     }
 
@@ -373,6 +469,134 @@ mod tests {
                 .is_some_and(|s| s.contains("homn")),
             "server info should mention homn"
         );
+    }
+
+    async fn state_with_brain(brain: Arc<dyn Brain>) -> McpState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+            brain: Some(brain),
+        }
+    }
+
+    #[tokio::test]
+    async fn recall_returns_provenance_hits_from_the_brain() {
+        let brain = MemoryBrain::new();
+        brain
+            .push(homn_types::Observation {
+                id: ulid::Ulid::new(),
+                source: homn_types::SourceKind::Dictation,
+                app: Some("Slack".into()),
+                captured_at: chrono::Utc::now(),
+                ingested_at: chrono::Utc::now(),
+                text: "Sarah promised the quote by Friday".into(),
+                redactions: vec![],
+                session: None,
+                speaker: None,
+                content_hash: 0,
+                provenance: homn_types::Provenance {
+                    source_id: "test".into(),
+                    upstream_ref: "t".into(),
+                },
+            })
+            .await;
+        let state = state_with_brain(Arc::new(brain)).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .recall(Parameters(RecallArgs {
+                cue: "Sarah promised".into(),
+                as_of: None,
+                k: 5,
+            }))
+            .await
+            .unwrap();
+        // The result is JSON content; pull the hits back out.
+        let body = res.content[0].as_text().unwrap().text.clone();
+        let hits: Vec<RecallHit> = serde_json::from_str(&body).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source, "dictation");
+        assert_eq!(hits[0].app.as_deref(), Some("Slack"));
+        assert!(hits[0].observation_id.starts_with("01"));
+    }
+
+    #[tokio::test]
+    async fn recall_without_a_brain_returns_a_clear_error() {
+        let state = test_state("").await;
+        let server = HomnMcpServer::new(state);
+        let err = server
+            .recall(Parameters(RecallArgs {
+                cue: "x".into(),
+                as_of: None,
+                k: 3,
+            }))
+            .await
+            .expect_err("no brain wired");
+        assert!(
+            err.message.to_lowercase().contains("no brain"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn timeline_rejects_from_after_to() {
+        let state = state_with_brain(Arc::new(MemoryBrain::new())).await;
+        let server = HomnMcpServer::new(state);
+        let err = server
+            .timeline(Parameters(TimelineArgs {
+                subject: "x".into(),
+                from: "2026-07-20T00:00:00Z".into(),
+                to: "2026-07-10T00:00:00Z".into(),
+            }))
+            .await
+            .expect_err("from > to");
+        assert!(
+            err.message.to_lowercase().contains("must not be after"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_with_recording_brain_makes_no_other_io() {
+        // SC-006 behavioural half: the handler touches only the brain. The RecordingBrain
+        // records the call and returns empty; the structural half (tests/read_path_no_egress.rs)
+        // forbids any HTTP-client dep that could egress.
+        let brain = Arc::new(RecordingBrain::default());
+        let state = state_with_brain(brain.clone()).await;
+        let server = HomnMcpServer::new(state);
+        let _ = server
+            .recall(Parameters(RecallArgs {
+                cue: "anything".into(),
+                as_of: None,
+                k: 3,
+            }))
+            .await
+            .unwrap();
+        let calls = brain.recall_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "recall hit the brain exactly once");
+    }
+
+    #[tokio::test]
+    async fn timeline_calls_only_the_brain() {
+        let brain = Arc::new(RecordingBrain::default());
+        let state = state_with_brain(brain.clone()).await;
+        let server = HomnMcpServer::new(state);
+        let _ = server
+            .timeline(Parameters(TimelineArgs {
+                subject: "pricing".into(),
+                from: "2026-07-01T00:00:00Z".into(),
+                to: "2026-07-31T00:00:00Z".into(),
+            }))
+            .await
+            .expect("timeline succeeds");
+        let calls = brain.timeline_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "timeline hit the brain exactly once");
+        assert_eq!(calls[0].0, "pricing");
     }
 
     #[tokio::test]

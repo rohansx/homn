@@ -423,6 +423,7 @@ async fn main() -> anyhow::Result<()> {
                 engine,
                 rules: rules_handle,
                 audit,
+                brain: None,
             };
             match transport {
                 Some(McpTransport::Stdio) | None => {
