@@ -129,6 +129,24 @@ enum Command {
         #[command(subcommand)]
         action: EvalAction,
     },
+    /// Add/list/remove a capture-exclude rule in `policies/ingest.rhai` (v2: US3 / T042).
+    /// Hot-reloaded by a running daemon.
+    Exclude {
+        /// The app glob (e.g. `Slack*`) or domain (e.g. `github.com`) to exclude. Omit with `--list`.
+        target: Option<String>,
+        /// Treat <target> as a domain (exact match) instead of an app glob.
+        #[arg(long)]
+        domain: bool,
+        /// List current `homn exclude` rules instead of adding one.
+        #[arg(long)]
+        list: bool,
+        /// Remove the `homn exclude` rule matching <target>.
+        #[arg(long)]
+        remove: bool,
+        /// Emit JSON (`{ "excludes": [{kind,target}] }`) for `--list`; machine-readable confirm otherwise.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -471,6 +489,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Eval { action }) => {
             eval_command(action).await?;
+        }
+        Some(Command::Exclude {
+            target,
+            domain,
+            list,
+            remove,
+            json,
+        }) => {
+            exclude_command(target, domain, list, remove, json).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -958,6 +985,193 @@ async fn ledger_command(action: LedgerAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ===== `homn exclude` (v2: US3 / T042) ================================================
+//
+// Edits `policies/ingest.rhai` to add/list/remove a capture-exclude rule. Each rule is a
+// marked two-line block so it can be found back without parsing Rhai:
+//   // homn:exclude app Slack*
+//   if app.matches("Slack*") { deny_with("exclude.cli"); }
+// A running daemon hot-reloads the file (FR-013).
+
+async fn exclude_command(
+    target: Option<String>,
+    domain: bool,
+    list: bool,
+    remove: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path)?;
+    let path = config.policy.policies_dir.join("ingest.rhai");
+
+    if list && remove {
+        anyhow::bail!("--list and --remove are mutually exclusive");
+    }
+
+    if list {
+        let excludes = list_excludes(&path)?;
+        if json {
+            let arr: Vec<_> = excludes
+                .iter()
+                .map(|(kind, t)| serde_json::json!({"kind": kind, "target": t}))
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"excludes": arr}))?
+            );
+        } else {
+            if excludes.is_empty() {
+                println!("(no `homn exclude` rules in {})", path.display());
+            } else {
+                for (kind, t) in &excludes {
+                    println!("{kind}\t{t}");
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let target = target.ok_or_else(|| {
+        anyhow::anyhow!("a target is required (e.g. `homn exclude Slack*` or `homn exclude github.com --domain`)")
+    })?;
+
+    if remove {
+        let removed = remove_exclude(&path, &target, domain)?;
+        if removed {
+            eprintln!(
+                "removed exclude `{target}` from {} (a running daemon hot-reloads within ~50ms)",
+                path.display()
+            );
+        } else {
+            eprintln!(
+                "no `homn exclude` rule matching `{target}` found in {}",
+                path.display()
+            );
+        }
+        return Ok(());
+    }
+
+    // Add.
+    let added = add_exclude(&path, &target, domain)?;
+    if added {
+        eprintln!(
+            "added exclude `{target}` ({}) to {}",
+            exclude_kind(domain),
+            path.display()
+        );
+        eprintln!("(a running daemon hot-reloads the change within ~50ms)");
+    } else {
+        eprintln!("exclude `{target}` already present in {}", path.display());
+    }
+    Ok(())
+}
+
+/// Add a marked exclude block to `path`. Returns `false` if an identical exclude already exists.
+fn add_exclude(path: &Path, target: &str, domain: bool) -> anyhow::Result<bool> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = std::fs::read_to_string(path).unwrap_or_default();
+    if list_excludes(path)?
+        .iter()
+        .any(|(k, t)| *k == exclude_kind(domain) && t == target)
+    {
+        return Ok(false);
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    let kind = exclude_kind(domain);
+    text.push_str(&format!(
+        "\n// homn:exclude {kind} {target}  (added via `homn exclude` on {today})\n{rule}\n",
+        rule = exclude_rule(target, domain)
+    ));
+    std::fs::write(path, text)?;
+    Ok(true)
+}
+
+fn exclude_kind(domain: bool) -> &'static str {
+    if domain {
+        "domain"
+    } else {
+        "app"
+    }
+}
+
+fn exclude_rule(target: &str, domain: bool) -> String {
+    if domain {
+        format!("if domain == \"{target}\" {{ deny_with(\"exclude.cli\"); }}")
+    } else {
+        format!("if app.matches(\"{target}\") {{ deny_with(\"exclude.cli\"); }}")
+    }
+}
+
+/// Parse the marked `// homn:exclude <kind> <target>` lines out of the ingest policy.
+fn list_excludes(path: &Path) -> anyhow::Result<Vec<(&'static str, String)>> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("// homn:exclude ") {
+            let mut parts = rest.split_whitespace();
+            let kind = parts.next().unwrap_or("");
+            let target = parts.next().unwrap_or("");
+            if target.is_empty() {
+                continue;
+            }
+            let kind_str: &'static str = match kind {
+                "app" => "app",
+                "domain" => "domain",
+                _ => "app",
+            };
+            out.push((kind_str, target.to_owned()));
+        }
+    }
+    Ok(out)
+}
+
+/// Remove the marked two-line block whose target matches.
+fn remove_exclude(path: &Path, target: &str, domain: bool) -> anyhow::Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let marker = format!("// homn:exclude {} {}", exclude_kind(domain), target);
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_owned()).collect();
+    let mut removed = false;
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim_start().starts_with(&marker) {
+            // Remove the marker line + the following rule line (if present).
+            lines.remove(i);
+            if i < lines.len() && lines[i].trim_start().starts_with("if ") {
+                lines.remove(i);
+            }
+            // Collapse a single trailing blank line left behind.
+            if i > 0
+                && i < lines.len()
+                && lines[i - 1].trim().is_empty()
+                && lines[i].trim().is_empty()
+            {
+                lines.remove(i);
+            }
+            removed = true;
+            break;
+        }
+        i += 1;
+    }
+    if !removed {
+        return Ok(false);
+    }
+    let mut out = lines.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    std::fs::write(path, out)?;
+    Ok(removed)
+}
+
 // ===== `homn eval` (v2: US1) ===========================================================
 
 async fn eval_command(action: EvalAction) -> anyhow::Result<()> {
@@ -1073,5 +1287,85 @@ async fn eval_command(action: EvalAction) -> anyhow::Result<()> {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod exclude_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tmp_ingest(name: &str) -> PathBuf {
+        let p =
+            std::env::temp_dir().join(format!("homn-exclude-{}-{name}.rhai", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    #[test]
+    fn add_list_remove_roundtrip_app() {
+        let p = tmp_ingest("app");
+        // Add an app exclude.
+        assert!(
+            add_exclude(&p, "Slack*", false).unwrap(),
+            "first add inserts"
+        );
+        // Duplicate is a no-op.
+        assert!(
+            !add_exclude(&p, "Slack*", false).unwrap(),
+            "duplicate not re-added"
+        );
+        // Listed.
+        let listed = list_excludes(&p).unwrap();
+        assert_eq!(listed, vec![("app", "Slack*".to_owned())]);
+        // The rule text is present and parses-shaped.
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("if app.matches(\"Slack*\")"), "{text}");
+        // Remove.
+        assert!(
+            remove_exclude(&p, "Slack*", false).unwrap(),
+            "remove finds it"
+        );
+        assert!(list_excludes(&p).unwrap().is_empty(), "gone after remove");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn add_list_remove_domain() {
+        let p = tmp_ingest("domain");
+        assert!(add_exclude(&p, "github.com", true).unwrap());
+        let listed = list_excludes(&p).unwrap();
+        assert_eq!(listed, vec![("domain", "github.com".to_owned())]);
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("if domain == \"github.com\""), "{text}");
+        assert!(remove_exclude(&p, "github.com", true).unwrap());
+        assert!(list_excludes(&p).unwrap().is_empty());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn remove_missing_is_false_not_error() {
+        let p = tmp_ingest("missing");
+        std::fs::write(&p, "// unrelated\nfn x() {}\n").unwrap();
+        assert!(!remove_exclude(&p, "nope", false).unwrap());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn add_preserves_existing_policy_text() {
+        let p = tmp_ingest("preserve");
+        std::fs::write(
+            &p,
+            "// my policy\nif incognito { deny_with(\"browser.incognito\"); }\n",
+        )
+        .unwrap();
+        assert!(add_exclude(&p, "1Password*", false).unwrap());
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            text.contains("browser.incognito"),
+            "existing rule kept: {text}"
+        );
+        assert!(text.contains("1Password*"), "new exclude appended: {text}");
+        let _ = std::fs::remove_file(&p);
     }
 }
