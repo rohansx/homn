@@ -5,12 +5,25 @@
 //! and the gate **fails closed** on any error. See
 //! [`specs/002-ambient-memory/contracts/gate-pipeline.md`].
 //!
-//! This crate is scaffolded now; the redaction stage (cloakpipe), the Rhai ingest-policy stage
-//! (homn-policy), and the hash-chained ledger (homn-audit) are implemented in Phase 2 — tasks
-//! T034–T042, tests-first per Constitution VI.
+//! Modules:
+//! - [`redaction`] — the redaction bank (regex detectors + placeholders, always-on secrets scan)
+//! - [`policy`] — the Rhai ingest policy (`allow` / `deny` / `redact(kinds)` / `allow_cloud`),
+//!   hot-reloadable, fail-closed
+//! - [`pipeline`] — [`Gate::run`], the only constructor of a stored `Observation`
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+pub mod pipeline;
+pub mod policy;
+pub mod redaction;
+
+pub use pipeline::{decision_receipt, Gate, GateOutput};
+pub use policy::{
+    spawn_reloader as spawn_policy_reloader, IngestContext, IngestPolicy, IngestPolicyHandle,
+    IngestPolicyReloader, PolicyDecision,
+};
+pub use redaction::{Redacted, RedactionBank, RedactionSpan};
 
 /// The action an ingest policy resolves to for a captured item.
 ///

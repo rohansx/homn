@@ -1236,9 +1236,20 @@ dependencies = [
 name = "homn-gate"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "arc-swap",
+ "chrono",
+ "homn-audit",
  "homn-types",
+ "notify",
+ "regex",
+ "rhai",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]
