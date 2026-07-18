@@ -15,3 +15,9 @@ homn-sources = { workspace = true }
 homn-gate    = { workspace = true }
 serde        = { workspace = true }
 thiserror    = { workspace = true }
+agidb        = { workspace = true, optional = true }
+
+[features]
+brain-agidb   = ["dep:agidb"]
+# TODO(source): ctxgraph dep lands only if the Phase 0 gate (T021) demands it.
+brain-ctxgraph = []
