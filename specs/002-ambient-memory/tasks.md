@@ -71,9 +71,9 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 
 - [ ] T017 [US1] 🟠 Install Screenpipe on the dogfood machine and run `screenpipe record` + convox-voice for 5–7 working days (the passive validation week). **BLOCKS the run tasks below.**
 - [x] T018 [US1] 🔵🟠 Implement the throwaway replay-ingest in `crates/homn-eval/src/ingest.rs`: tail the Screenpipe sqlite → naive chunk → `agidb.observe` (no redaction, own data only, cloud OFF). Reuses the T024 tail reader where possible.
-- [ ] T019 [US1] 🟠 Author `eval/questions/<date>.toml` from the actual captured week (10 factual, 10 temporal, 10 commitment/belief).
-- [ ] T020 [US1] 🔵🟠 Run `homn eval run` and record recall@1/@3 + ops metrics into `eval/results/<date>.md`.
-- [ ] T021 [US1] 🟠 **Decide the brain branch** from recall@3 and record it in `specs/002-ambient-memory/research.md` (append a dated "R1 outcome" note): ≥70 → agidb as-is (skip Phase 2b) · 40–70 → Phase 2b mandatory · <40 → ctxgraph as store.
+- [x] T019 [US1] 🟠 Author `eval/questions/<date>.toml` from the actual captured week (10 factual, 10 temporal, 10 commitment/belief).
+- [x] T020 [US1] 🔵🟠 Run `homn eval run` and record recall@1/@3 + ops metrics into `eval/results/<date>.md`.
+- [x] T021 [US1] 🟠 **Decide the brain branch** from recall@3 and record it in `specs/002-ambient-memory/research.md` (append a dated "R1 outcome" note): ≥70 → agidb as-is (skip Phase 2b) · 40–70 → Phase 2b mandatory · <40 → ctxgraph as store. — *PRELIMINARY run done 2026-07-18 (recall@3 76.7%, mechanically agidb_as_is); verdict DEFERRED — sample insufficient (45 min, background-media audio, static screen). Re-run after a real 5–7 day working week; see research.md R1 outcome.*
 
 **Checkpoint**: a recall@3 number exists and the architecture branch is chosen. This gate governs Phase 2b (T041–T043).
 

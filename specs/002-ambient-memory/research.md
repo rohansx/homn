@@ -108,3 +108,60 @@ Phase 0 of the plan. Resolves the load-bearing unknowns and records the decision
 | Extraction quality strategy | R10 |
 
 No `NEEDS CLARIFICATION` markers remain.
+
+---
+
+## R1 outcome — Phase 0 gate run, 2026-07-18 (PRELIMINARY; verdict DEFERRED)
+
+**Run**: `homn eval ingest ~/.screenpipe/db.sqlite` → 194 rows, 44 chunks; `homn eval run
+eval/questions/2026-07-18.toml` → **recall@1 70.0%, recall@3 76.7%** (factual 90%, temporal 70%,
+commitment 70%). Full results + reproduce steps: [`eval/results/2026-07-18.md`](../../eval/results/2026-07-18.md).
+
+**Mechanical verdict**: recall@3 ≥ 70% → the threshold table says `agidb_as_is` (skip Phase 2b).
+
+**Actual verdict: DEFERRED.** This number is a **pipeline validation on real capture, not a
+brain-architecture decision.** The sample is too thin and too non-representative:
+
+1. **~45 minutes of capture** (13:39–14:24 UTC, 2026-07-18). The plan calls for 5–7 working days.
+2. **No real work activity on screen** — all 12 OCR frames are an identical static Konsole "File"
+   menu. The user was not producing varied screen content during this window.
+3. **The audio is background media, not the user's speech** — 168 mic transcriptions of a YouTube
+   video playing through speakers. Zero mentions of the actual work.
+4. The questions are grounded in the captured content, so they're answerable by substring/keyword
+   recall — which agidb handles trivially. 76.7% on distinctive-phrase retrieval says little about
+   recall over a real week of mixed, noisy, multi-app activity.
+
+A real decision requires a real capture week. The number crossing 70% here is because the task is
+easy, not because the brain is proven.
+
+### Blockers found + fixes applied this run
+
+1. **Ambient mic audio is background-media noise.** The mic transcribes whatever plays through the
+   speakers, not intentional speech. **Fix applied**: the screenpipe systemd unit now runs with
+   `--disable-audio`; new capture adds no audio noise. The historical 168 noise rows remain in the
+   DB (fixed, non-growing) and can be purged with `DELETE FROM audio_transcriptions` for a clean
+   baseline. **Product finding**: `ambient_audio` is not a viable speech sense without VAD/filtering
+   or speaker separation; **push-to-talk dictation (convox-voice) is the speech sense** — exactly
+   the L1 design (convox-voice = dictation; ambient_audio = a separate, harder, later sense).
+2. **convox-voice did not persist transcriptions.** Only 4 old log lines carried `text="..."`; the
+   current faster_whisper backend emitted none, so the DictationPipe / `eval ingest` had no speech
+   feed. **Fix applied**: convox-voice now appends each final transcription to
+   `~/.local/share/convox-voice/dictation.jsonl` (projx/convox-voice `e073554`), and `homn eval
+   ingest` reads it as the `dictation` source alongside screenpipe OCR.
+3. **The capture week has not actually started.** ~45 min of a static menu is not a working week.
+
+### Re-run procedure (the condition for a valid R1 decision)
+
+1. Work at the machine for 5–7 days with screenpipe (screen OCR, audio OFF) + convox-voice
+   (push-to-talk dictation) running. Dictate intentionally — commands, summaries, commitments.
+2. Optionally purge the historical audio noise: `sqlite3 ~/.screenpipe/db.sqlite "DELETE FROM
+   audio_transcriptions;"` (audio capture is disabled, so this is safe).
+3. Author a fresh `eval/questions/<date>.toml` from the real week — 10 factual, 10 temporal, 10
+   commitment, grounded in what actually happened (real apps, real dictation, real people).
+4. `homn eval ingest ~/.screenpipe/db.sqlite --brain eval/results/<date>.brain.agidb` then
+   `homn eval run eval/questions/<date>.toml --brain eval/results/<date>.brain.agidb`.
+5. Record the recall@3 here; the threshold table then decides the branch for real.
+
+**Until that run, the brain branch remains CONDITIONAL** (as R1 always specified). No Phase 2b
+work starts; no ctxgraph swap starts. The gate machinery is built, proven on real capture, and
+ready — the only missing input is a real week of data.
