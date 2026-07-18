@@ -311,7 +311,10 @@ mod tests {
         let by_default = bank.redact("ping chris@acme.com please", &[]);
         assert_eq!(by_default.text, "ping chris@acme.com please");
 
-        let with_email = bank.redact("ping chris@acme.com please", &kinds(&[RedactionKind::EmailAddr]));
+        let with_email = bank.redact(
+            "ping chris@acme.com please",
+            &kinds(&[RedactionKind::EmailAddr]),
+        );
         assert_eq!(with_email.text, "ping [REDACTED:email_addr] please");
     }
 

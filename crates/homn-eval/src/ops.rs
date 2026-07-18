@@ -122,7 +122,11 @@ mod tests {
     #[test]
     fn disk_growth_is_a_saturating_delta() {
         assert_eq!(disk_growth_bytes(1_000, 4_096), 3_096);
-        assert_eq!(disk_growth_bytes(4_096, 1_000), 0, "shrink reads as zero growth");
+        assert_eq!(
+            disk_growth_bytes(4_096, 1_000),
+            0,
+            "shrink reads as zero growth"
+        );
     }
 
     #[test]
@@ -150,7 +154,11 @@ mod tests {
     #[test]
     fn parse_stat_rejects_malformed_lines() {
         assert_eq!(parse_proc_stat_ticks(""), None);
-        assert_eq!(parse_proc_stat_ticks("1234 (x) R 1"), None, "too few fields");
+        assert_eq!(
+            parse_proc_stat_ticks("1234 (x) R 1"),
+            None,
+            "too few fields"
+        );
         assert_eq!(parse_proc_stat_ticks("no comm parens at all"), None);
     }
 

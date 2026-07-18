@@ -5,17 +5,32 @@
 //! store, with crash-safe watermarks and bounded-channel backpressure. See
 //! [`specs/002-ambient-memory/contracts/gate-pipeline.md`] and plan Phase 1.
 //!
-//! This crate is scaffolded now; the pipeline, dedupe, sessionizer, and store trait are implemented
-//! in Phase 1 (tasks T022–T030), tests-first per Constitution VI. Driven as a subcommand through
-//! `homn-bin` (Constitution VII: one binary).
+//! Modules:
+//! - [`store`] — the `Store` trait (`MemoryStore` default; `AgidbStore` behind `brain-agidb`)
+//! - [`session`] — the v1 sessionizer (app-focus / meeting episodes)
+//! - [`dedupe`] — near-duplicate collapse over the post-redaction content hash
+//! - [`pipeline`] — [`Pipeline`] + [`pipeline::drain`], the per-source run loop
+//!
+//! The v1 binary surface (`homn capture start/stop`, `homn status`, …) lives in `homn-bin`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-/// Phase-1 pipeline stages, in order, for reference by the implementation tasks.
-///
-/// Kept as a typed enum so the daemon loop and its tests share one vocabulary for where an item is
-/// in the pipeline. The gate stage is where Invariant 1 is enforced (see [`homn_gate`]).
+pub mod dedupe;
+pub mod pipeline;
+pub mod session;
+pub mod store;
+
+pub use dedupe::Dedupe;
+pub use pipeline::{drain, Pipeline, PipelineStats, Processed, TickResult};
+pub use session::Sessionizer;
+pub use store::{MemoryStore, Store};
+
+#[cfg(feature = "brain-agidb")]
+pub use store::AgidbStore;
+
+/// Pipeline stages, in order, for reference. The gate stage is where Invariant 1 is enforced
+/// (see [`homn_gate`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     /// A source produced a pre-gate `RawCapture`.
@@ -36,7 +51,6 @@ mod tests {
 
     #[test]
     fn pipeline_order_is_gate_before_store() {
-        // Structural reminder of the load-bearing ordering: the gate precedes the store, always.
         let order = [
             Stage::Fetched,
             Stage::Gated,

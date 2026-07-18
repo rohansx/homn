@@ -26,9 +26,7 @@
 #![warn(missing_docs)]
 
 use chrono::Utc;
-use homn_types::{
-    IngestOutcome, Observation, Provenance, RawCapture, Receipt, RedactionRef,
-};
+use homn_types::{IngestOutcome, Observation, Provenance, RawCapture, Receipt, RedactionRef};
 use ulid::Ulid;
 
 use crate::policy::{IngestContext, IngestPolicy, PolicyDecision};
@@ -40,9 +38,12 @@ use crate::IngestAction;
 pub enum GateOutput {
     /// The item passed the gate and may be persisted. The [`Observation`] is built entirely from
     /// redacted text; `redactions` are plaintext-free refs awaiting `ledger_seq` from the caller.
+    ///
+    /// `observation` is boxed so the enum stays small — [`Observation`] is wide enough that an
+    /// unboxed `Stored` would dominate the variant sizes and trip `clippy::large_enum_variant`.
     Stored {
         /// The storable observation (post-redaction only).
-        observation: Observation,
+        observation: Box<Observation>,
         /// Redaction refs, one per redacted span; `ledger_seq` is 0 until the caller back-fills it
         /// from the audit ledger.
         redactions: Vec<RedactionRef>,
@@ -106,11 +107,8 @@ impl Gate {
         let Redacted { text, spans } = self.bank.redact(&capture.text, &requested);
 
         // 3. OBSERVE — construct the Observation purely from `text` (post-redaction).
-        let content_hash = Observation::compute_content_hash(
-            capture.source,
-            capture.app.as_deref(),
-            &text,
-        );
+        let content_hash =
+            Observation::compute_content_hash(capture.source, capture.app.as_deref(), &text);
         let observation = Observation {
             id: Ulid::new(),
             source: capture.source,
@@ -129,7 +127,7 @@ impl Gate {
         };
 
         GateOutput::Stored {
-            observation,
+            observation: Box::new(observation),
             redactions: redaction_refs(&spans),
             permits_cloud: decision.action.permits_cloud(),
         }
@@ -206,7 +204,6 @@ pub fn decision_receipt(out: &GateOutput) -> Receipt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::IngestContext;
     use homn_types::{RawCapture, RedactionKind, SourceKind};
 
     fn capture(text: &str) -> RawCapture {
@@ -270,10 +267,7 @@ mod tests {
         let gate = Gate::new(IngestPolicy::compile("deny();").unwrap());
         let out = gate.run(&capture("anything"));
         match out {
-            GateOutput::Dropped {
-                outcome,
-                rule_id,
-            } => {
+            GateOutput::Dropped { outcome, rule_id } => {
                 assert_eq!(outcome, IngestOutcome::Deny);
                 assert_eq!(rule_id.as_deref(), None);
             }
@@ -320,9 +314,10 @@ mod tests {
         let a = gate.run(&capture("card 4242 4242 4242 4242 note"));
         let b = gate.run(&capture("card 4111 1111 1111 1111 note")); // different PAN, same placeholder
         let (ha, hb) = match (a, b) {
-            (GateOutput::Stored { observation: a, .. }, GateOutput::Stored { observation: b, .. }) => {
-                (a.content_hash, b.content_hash)
-            }
+            (
+                GateOutput::Stored { observation: a, .. },
+                GateOutput::Stored { observation: b, .. },
+            ) => (a.content_hash, b.content_hash),
             _ => panic!("expected both Stored"),
         };
         assert_eq!(

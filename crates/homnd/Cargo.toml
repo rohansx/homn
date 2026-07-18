@@ -13,11 +13,22 @@ homepage.workspace     = true
 homn-types   = { workspace = true }
 homn-sources = { workspace = true }
 homn-gate    = { workspace = true }
+homn-audit   = { workspace = true }
 serde        = { workspace = true }
+serde_json   = { workspace = true }
 thiserror    = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+chrono       = { workspace = true }
+ulid         = { workspace = true }
+tokio        = { workspace = true }
+async-trait  = { workspace = true }
 agidb        = { workspace = true, optional = true }
 
 [features]
 brain-agidb   = ["dep:agidb"]
 # TODO(source): ctxgraph dep lands only if the Phase 0 gate (T021) demands it.
 brain-ctxgraph = []
+
+[dev-dependencies]
+tempfile = "3"

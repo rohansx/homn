@@ -246,9 +246,7 @@ impl IngestPolicy {
             .map_err(|e| anyhow::anyhow!("ingest policy compile error: {e}"))?;
         // The engine's per-call closures capture a per-call slot, so we rebuild it on every
         // evaluate(); the AST is the only reusable artifact we keep.
-        Ok(Self {
-            ast: Arc::new(ast),
-        })
+        Ok(Self { ast: Arc::new(ast) })
     }
 
     /// Load and compile the policy file at `path`.
@@ -281,12 +279,12 @@ impl IngestPolicy {
             };
         }
 
-        let outcome = slot
-            .lock()
-            .expect("slot poisoned")
-            .take();
+        let outcome = slot.lock().expect("slot poisoned").take();
         match outcome {
-            Some((action, id)) => PolicyDecision { action, rule_id: id },
+            Some((action, id)) => PolicyDecision {
+                action,
+                rule_id: id,
+            },
             None => default_decision(ctx),
         }
     }
@@ -308,9 +306,7 @@ pub struct IngestPolicyReloader {
 /// the last-good policy active — a broken edit never stops the gate, and never downgrades it.
 pub fn spawn_reloader(path: impl Into<PathBuf>) -> anyhow::Result<IngestPolicyReloader> {
     let path = path.into();
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.clone());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
     let parent = canonical
         .parent()
         .map(|p| p.to_path_buf())
@@ -331,7 +327,9 @@ pub fn spawn_reloader(path: impl Into<PathBuf>) -> anyhow::Result<IngestPolicyRe
         };
         let relevant = matches!(
             event.kind,
-            notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_)
+            notify::EventKind::Modify(_)
+                | notify::EventKind::Create(_)
+                | notify::EventKind::Remove(_)
         );
         if !relevant {
             return;
@@ -430,7 +428,10 @@ mod tests {
         let p = IngestPolicy::compile(src).unwrap();
         assert_eq!(p.evaluate(&ctx("Slack")).rule_id.as_deref(), Some("slack"));
         assert_eq!(p.evaluate(&ctx("Firefox")).action, IngestAction::Deny);
-        assert_eq!(p.evaluate(&ctx("Firefox")).rule_id.as_deref(), Some("default.deny"));
+        assert_eq!(
+            p.evaluate(&ctx("Firefox")).rule_id.as_deref(),
+            Some("default.deny")
+        );
     }
 
     #[test]

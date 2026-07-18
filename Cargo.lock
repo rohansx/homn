@@ -1369,11 +1369,20 @@ name = "homnd"
 version = "0.1.0"
 dependencies = [
  "agidb",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "homn-audit",
  "homn-gate",
  "homn-sources",
  "homn-types",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]
