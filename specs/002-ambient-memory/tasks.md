@@ -64,13 +64,13 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 - [x] T012 [US1] 🟢 Implement `QuestionSet` TOML load/validate in `crates/homn-eval/src/schema.rs` (reject a set that isn't 10/10/10) + test in `crates/homn-eval/tests/schema.rs`.
 - [x] T013 [US1] 🔵 Implement recall scoring in `crates/homn-eval/src/score.rs`: given a `recall(cue)` callable over the store, compute recall@k by checking whether `expected_ref` appears in top-k hits; hand-score fallback path when auto-match is ambiguous. (Interface-level now; wired to agidb at T036.)
 - [ ] T014 [P] [US1] 🟢 Implement ops-metric collection in `crates/homn-eval/src/ops.rs` (observations/day from store counts, disk delta from file sizes, CPU sampling hook, extraction-precision sampler over N extractions).
-- [ ] T015 [US1] 🟢 Wire `homn eval run <set> --k` and `homn eval ingest <db>` subcommands into `crates/homn-bin/src/main.rs` (clap), `--json` output; `eval run` prints the gate verdict table (≥70 / 40–70 / <40).
+- [x] T015 [US1] 🟢 Wire `homn eval run <set> --k` and `homn eval ingest <db>` subcommands into `crates/homn-bin/src/main.rs` (clap), `--json` output; `eval run` prints the gate verdict table (≥70 / 40–70 / <40).
 - [x] T016 [P] [US1] 🟢 Document the gate + how to author a question set in `eval/README.md` and cross-link from [quickstart.md](./quickstart.md) (already drafted) — keep them consistent.
 
 ### Throwaway ingest + the run (needs capture)
 
 - [ ] T017 [US1] 🟠 Install Screenpipe on the dogfood machine and run `screenpipe record` + convox-voice for 5–7 working days (the passive validation week). **BLOCKS the run tasks below.**
-- [ ] T018 [US1] 🔵🟠 Implement the throwaway replay-ingest in `crates/homn-eval/src/ingest.rs`: tail the Screenpipe sqlite → naive chunk → `agidb.observe` (no redaction, own data only, cloud OFF). Reuses the T024 tail reader where possible.
+- [x] T018 [US1] 🔵🟠 Implement the throwaway replay-ingest in `crates/homn-eval/src/ingest.rs`: tail the Screenpipe sqlite → naive chunk → `agidb.observe` (no redaction, own data only, cloud OFF). Reuses the T024 tail reader where possible.
 - [ ] T019 [US1] 🟠 Author `eval/questions/<date>.toml` from the actual captured week (10 factual, 10 temporal, 10 commitment/belief).
 - [ ] T020 [US1] 🔵🟠 Run `homn eval run` and record recall@1/@3 + ops metrics into `eval/results/<date>.md`.
 - [ ] T021 [US1] 🟠 **Decide the brain branch** from recall@3 and record it in `specs/002-ambient-memory/research.md` (append a dated "R1 outcome" note): ≥70 → agidb as-is (skip Phase 2b) · 40–70 → Phase 2b mandatory · <40 → ctxgraph as store.
@@ -102,8 +102,8 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 ### Store + MCP recall
 
 - [ ] T030 [US2] 🔵 Wire `agidb` behind a `Store` trait in `crates/homnd/src/store.rs` (`observe(Observation)`, `recall(cue, as_of)`, `timeline(subject, from, to)`), feature `brain-agidb`.
-- [ ] T031 [US2] 🔵 Extend the rmcp server in `crates/homn-mcp/src/` with `recall` and `timeline` tools per [contracts/mcp-tools.md](./contracts/mcp-tools.md); every hit carries provenance; assert no network in the handler.
-- [ ] T032 [P] [US2] 🟢 Integration test `tests/read_path_no_egress.rs`: serving `recall`/`timeline` performs zero network syscalls (SC-006) — e.g. via a deny-all network guard in the test harness.
+- [x] T031 [US2] 🔵 Extend the rmcp server in `crates/homn-mcp/src/` with `recall` and `timeline` tools per [contracts/mcp-tools.md](./contracts/mcp-tools.md); every hit carries provenance; assert no network in the handler.
+- [x] T032 [P] [US2] 🟢 Integration test `tests/read_path_no_egress.rs`: serving `recall`/`timeline` performs zero network syscalls (SC-006) — e.g. via a deny-all network guard in the test harness.
 - [ ] T033 [US2] 🔵 Add `homn connect --print-link` (MCP connector link) in `crates/homn-bin/src/main.rs`; streamable-HTTP + stdio transports.
 
 **Checkpoint**: MVP demo — Claude answers `recall`/`timeline` about a real session, provenance shown, no read-path egress.
@@ -129,7 +129,7 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 - [ ] T039 [US3] 🟢 Implement ingest-policy evaluation in `crates/homn-gate/src/policy.rs` reusing `homn-policy` (input `{app,domain,source_kind,window_title,incognito}` → `IngestAction`); seed `policies/ingest.rhai` with conservative defaults (FR-026).
 - [ ] T040 [US3] 🟢 Extend `homn-audit` with the hash-chained redaction/receipt ledger (`Decision`/`Disclosure`/`Deletion`) in `crates/homn-audit/src/ledger.rs`; `homn ledger verify` subcommand.
 - [ ] T041 [US3] 🟢 Assemble the gate as the pipeline stage in `crates/homn-gate/src/lib.rs` per [contracts/gate-pipeline.md](./contracts/gate-pipeline.md) (POLICY→REDACT→dedupe→sessionize→store, fail-closed, gate output *is* the storable Observation) and insert it into `homnd`'s `pipeline.rs` before store (T028).
-- [ ] T042 [P] [US3] 🟢 Add `homn exclude <app|domain> [--list|--remove]` in `crates/homn-bin/src/main.rs` (edits `policies/ingest.rhai`, hot-reloaded).
+- [x] T042 [P] [US3] 🟢 Add `homn exclude <app|domain> [--list|--remove]` in `crates/homn-bin/src/main.rs` (edits `policies/ingest.rhai`, hot-reloaded).
 
 **Checkpoint**: nothing unredacted reaches disk; excluded apps produce zero observations; ledger verifiable (SC-007).
 
