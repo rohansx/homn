@@ -22,6 +22,7 @@ homn-mcp      = { workspace = true }
 homn-policy   = { workspace = true }
 homn-learning = { workspace = true }
 homn-eval     = { workspace = true }
+agidb         = { workspace = true, optional = true }
 regex         = { workspace = true }
 arc-swap      = { workspace = true }
 
@@ -34,3 +35,9 @@ tracing-subscriber = { workspace = true }
 humantime     = { workspace = true }
 chrono        = { workspace = true }
 is-terminal   = { workspace = true }
+
+[features]
+default = []
+# Enable the agidb-backed brain for `homn eval run` / `homn eval ingest` (Phase 0).
+# CI builds without it; local dogfood builds with `--features brain-agidb`.
+brain-agidb = ["homn-eval/brain-agidb", "dep:agidb"]

@@ -148,13 +148,28 @@ enum EvalAction {
         /// Path to the question-set TOML.
         file: PathBuf,
     },
-    /// Score recall@k over ingested data. Needs the `brain-agidb` feature + a store.
+    /// Score recall@k over an ingested brain. Needs `--features brain-agidb` + a `--brain` path.
     Run {
         /// Path to the question-set TOML.
         file: PathBuf,
-        /// k for recall@k. Default 3.
+        /// k for recall@k. Default 3 (the Phase-0 gate).
         #[arg(long, default_value_t = 3)]
         k: u32,
+        /// Path to the agidb brain directory populated by `homn eval ingest`.
+        #[arg(long)]
+        brain: PathBuf,
+        /// Emit JSON (`{ recall_at_1, recall_at_k, per_kind, gate }`) instead of human text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Throwaway Phase-0 replay-ingest: Screenpipe sqlite → agidb brain (no redaction, own data).
+    /// Needs `--features brain-agidb`.
+    Ingest {
+        /// Path to the Screenpipe capture sqlite DB.
+        screenpipe_db: PathBuf,
+        /// Path to the agidb brain directory to populate (created if absent).
+        #[arg(long)]
+        brain: PathBuf,
     },
 }
 
@@ -965,16 +980,98 @@ async fn eval_command(action: EvalAction) -> anyhow::Result<()> {
             );
             Ok(())
         }
-        EvalAction::Run { file, k } => {
-            // Running a real eval needs a recall store. That store is the brain (agidb), behind
-            // `brain-agidb`, and the Phase-0 dogfood wiring lands with the daemon-integration lane.
-            // Until then, surface the dependency honestly rather than silently no-op'ing.
-            let _ = (file, k);
-            eprintln!(
-                "homn eval run needs the recall store (brain-agidb + a store path), wired in the \
-                 daemon-integration lane. Validate your set with `homn eval validate` for now."
-            );
-            std::process::exit(2);
+        EvalAction::Run {
+            file,
+            k,
+            brain,
+            json,
+        } => {
+            #[cfg(not(feature = "brain-agidb"))]
+            {
+                let _ = (file, k, brain, json);
+                eprintln!(
+                    "homn eval run needs the agidb brain. Rebuild with:\n  \
+                     cargo build -p homn-bin --features brain-agidb\nthen pass --brain <path>."
+                );
+                std::process::exit(2);
+            }
+            #[cfg(feature = "brain-agidb")]
+            {
+                let src = std::fs::read_to_string(&file)
+                    .map_err(|e| anyhow::anyhow!("read {}: {e}", file.display()))?;
+                let set = homn_eval::QuestionSet::from_toml_str(&src)
+                    .map_err(|e| anyhow::anyhow!("parse {}: {e}", file.display()))?;
+                set.validate(true)
+                    .map_err(|e| anyhow::anyhow!("invalid question set: {e}"))?;
+                // Run the sync recaller + scorer on a blocking thread: the recaller owns a
+                // private Tokio runtime which must both be created and dropped outside an
+                // async context (block_on inside a runtime panics; dropping a runtime inside
+                // one does too).
+                let brain_path = brain.clone();
+                let (result, branch) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    let recaller = homn_eval::ingest::AgidbRecaller::open(&brain_path)
+                        .map_err(|e| anyhow::anyhow!("open brain: {e}"))?;
+                    let result = homn_eval::score(&set, &recaller, k as usize);
+                    let branch = homn_eval::gate_verdict(result.recall_at_k);
+                    Ok((result, branch))
+                })
+                .await??;
+                if json {
+                    let json_out = serde_json::json!({
+                        "k": result.k,
+                        "total": result.total,
+                        "recall_at_1": result.recall_at_1,
+                        "recall_at_k": result.recall_at_k,
+                        "per_kind_recall_at_k": result.per_kind_recall_at_k,
+                        "ops": result.ops,
+                        "gate": branch,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_out)?);
+                } else {
+                    print!("{}", homn_eval::format_report(&result, branch));
+                }
+                Ok(())
+            }
+        }
+        EvalAction::Ingest {
+            screenpipe_db,
+            brain,
+        } => {
+            #[cfg(not(feature = "brain-agidb"))]
+            {
+                let _ = (screenpipe_db, brain);
+                eprintln!(
+                    "homn eval ingest needs the agidb brain. Rebuild with:\n  \
+                     cargo build -p homn-bin --features brain-agidb"
+                );
+                std::process::exit(2);
+            }
+            #[cfg(feature = "brain-agidb")]
+            {
+                use homn_eval::ingest::{replay_ingest, IngestConfig};
+
+                if !screenpipe_db.exists() {
+                    anyhow::bail!("screenpipe db not found: {}", screenpipe_db.display());
+                }
+                let agidb_cfg =
+                    agidb::AgidbConfig::new(&brain).with_extractor(agidb::ExtractorSetup::Null);
+                let agidb_brain = agidb::Agidb::open_with(agidb_cfg)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("open brain {}: {e}", brain.display()))?;
+                let report =
+                    replay_ingest(&screenpipe_db, &agidb_brain, &IngestConfig::default()).await?;
+                agidb_brain
+                    .flush()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("flush brain: {e}"))?;
+                println!(
+                    "ingested: {} rows read, {} chunks stored into {}",
+                    report.rows_read,
+                    report.chunks_stored,
+                    brain.display()
+                );
+                Ok(())
+            }
         }
     }
 }

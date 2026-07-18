@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 agidb     = { workspace = true, optional = true }
 rusqlite  = { workspace = true, optional = true }
 tokio     = { workspace = true, optional = true }
+chrono    = { workspace = true, optional = true }
 
 [features]
-brain-agidb = ["dep:agidb", "dep:rusqlite", "dep:tokio"]
+brain-agidb = ["dep:agidb", "dep:rusqlite", "dep:tokio", "dep:chrono"]

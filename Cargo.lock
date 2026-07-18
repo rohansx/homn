@@ -1177,6 +1177,7 @@ dependencies = [
 name = "homn-bin"
 version = "0.1.0"
 dependencies = [
+ "agidb",
  "anyhow",
  "arc-swap",
  "chrono",
@@ -1226,6 +1227,7 @@ name = "homn-eval"
 version = "0.1.0"
 dependencies = [
  "agidb",
+ "chrono",
  "rusqlite",
  "serde",
  "thiserror 2.0.18",
