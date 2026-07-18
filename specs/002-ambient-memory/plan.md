@@ -10,7 +10,7 @@ Turn homn from "policy engine for coding agents" into a local-first ambient memo
 
 ## Technical Context
 
-**Language/Version**: Rust stable, MSRV 1.83 (workspace-pinned).
+**Language/Version**: Rust stable, MSRV 1.85 (workspace-pinned).
 
 **Primary Dependencies**:
 - *Reused in-repo*: `homn-daemon` (Tokio runtime, unix sockets, event bus, supervisor), `homn-policy` (Rhai engine, hot-reload via `notify`, wall-clock budgets, rule trace), `homn-audit` (SQLite/WAL single-writer), `homn-mcp` (`rmcp` server + rate limiter), `homn-types`, `homn-bin` (clap subcommand dispatch), installer.

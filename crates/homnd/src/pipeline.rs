@@ -137,7 +137,7 @@ impl Pipeline {
             GateOutput::Stored {
                 mut observation,
                 mut redactions,
-                permits_cloud: _,
+                ..
             } => {
                 // 3. DEDUPE (post-redaction content hash).
                 {
@@ -240,7 +240,7 @@ pub async fn drain(pipeline: &Pipeline, source: &dyn Source) -> anyhow::Result<(
         match pipeline.tick(source).await? {
             TickResult::Paused => break,
             TickResult::Exhausted => break,
-            TickResult::Drained { stored: _, next: _ } => {
+            TickResult::Drained { .. } => {
                 // Keep draining until the source is exhausted.
                 continue;
             }

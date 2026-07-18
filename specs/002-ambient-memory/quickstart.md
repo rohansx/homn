@@ -4,7 +4,7 @@
 
 ## What you need installed
 
-- Rust stable (1.83+). `rustup default stable`.
+- Rust stable (1.85+). `rustup default stable`.
 - `cargo`, `git`, `sqlite3` (ad-hoc store/ledger inspection).
 - **Screenpipe** — the screen-capture source. **Not yet installed on the dogfood machine; installing it is Phase 0 task #1.**
 - **convox-voice** — dictation ASR. Already running as a systemd user service (Linux).

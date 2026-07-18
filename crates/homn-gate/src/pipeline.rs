@@ -182,11 +182,7 @@ fn redaction_refs(spans: &[RedactionSpan]) -> Vec<RedactionRef> {
 pub fn decision_receipt(out: &GateOutput) -> Receipt {
     use homn_types::{DecisionReceipt, Receipt as R};
     match out {
-        GateOutput::Stored {
-            observation,
-            permits_cloud: _,
-            ..
-        } => R::Decision(DecisionReceipt {
+        GateOutput::Stored { observation, .. } => R::Decision(DecisionReceipt {
             outcome: IngestOutcome::Allow,
             policy_id: None, // filled by the caller from the policy's rule_id, when applicable
             observation_ref: Some(observation.id.to_string()),
