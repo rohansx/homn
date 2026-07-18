@@ -30,12 +30,12 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 
 ## Phase 1: Setup (shared infrastructure)
 
-- [ ] T001 🟢 Add new workspace members (`homnd`, `homn-sources`, `homn-gate`, `homn-eval`) to `Cargo.toml` `[workspace].members` and `[workspace.dependencies]`, mirroring the existing path+version pattern.
-- [ ] T002 [P] 🟢 Scaffold `crates/homn-sources/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `async-trait`, `serde`, `chrono`, `thiserror`.
-- [ ] T003 [P] 🟢 Scaffold `crates/homn-gate/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `homn-policy`, `homn-audit`, `regex`, `blake3`, `thiserror`.
-- [ ] T004 [P] 🟢 Scaffold `crates/homnd/` (Cargo.toml + `src/lib.rs` + `src/main.rs` behind the bin) with deps: `homn-daemon`, `homn-sources`, `homn-gate`, `homn-types`, `tokio`, `tracing`.
-- [ ] T005 [P] 🟢 Scaffold `crates/homn-eval/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `serde`, `toml`, `chrono`, `clap`.
-- [ ] T006 [P] 🟢 Create `eval/questions/TEMPLATE.toml` (10 factual / 10 temporal / 10 commitment-belief slots, each with `id`, `kind`, `question`, `expected_ref`, `notes`) and `eval/README.md` explaining the Phase 0 gate.
+- [x] T001 🟢 Add new workspace members (`homnd`, `homn-sources`, `homn-gate`, `homn-eval`) to `Cargo.toml` `[workspace].members` and `[workspace.dependencies]`, mirroring the existing path+version pattern.
+- [x] T002 [P] 🟢 Scaffold `crates/homn-sources/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `async-trait`, `serde`, `chrono`, `thiserror`.
+- [x] T003 [P] 🟢 Scaffold `crates/homn-gate/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `homn-policy`, `homn-audit`, `regex`, `blake3`, `thiserror`.
+- [x] T004 [P] 🟢 Scaffold `crates/homnd/` (Cargo.toml + `src/lib.rs` + `src/main.rs` behind the bin) with deps: `homn-daemon`, `homn-sources`, `homn-gate`, `homn-types`, `tokio`, `tracing`.
+- [x] T005 [P] 🟢 Scaffold `crates/homn-eval/` (Cargo.toml + `src/lib.rs`) with deps: `homn-types`, `serde`, `toml`, `chrono`, `clap`.
+- [x] T006 [P] 🟢 Create `eval/questions/TEMPLATE.toml` (10 factual / 10 temporal / 10 commitment-belief slots, each with `id`, `kind`, `question`, `expected_ref`, `notes`) and `eval/README.md` explaining the Phase 0 gate.
 - [ ] T007 🟢 Add `agidb`, `cloakpipe` (and `ctxgraph`, feature-gated) as optional workspace dependencies with a git/path source and a `TODO(source)` note; guard them behind cargo features `brain-agidb`, `redact-cloakpipe`, `brain-ctxgraph` so the workspace still builds before they're vendored.
 
 **Checkpoint**: `cargo build --workspace` and `cargo clippy` pass with empty crates.
@@ -44,9 +44,9 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 
 ## Phase 2: Foundational (blocking prerequisites for all stories)
 
-- [ ] T008 🟢 Add memory types to `crates/homn-types/src/` **additively** (new modules `observation.rs`, `source.rs`, `session.rs`, `receipt.rs`): `Observation`, `SourceKind` (incl. reserved `Email|Slack|GitHub`), `RawCapture`, `RedactionRef`, `RedactionKind`, `SpanRef`, `SessionId`, `Session`, `SessionKind`, `Cursor`, `Watermark`, `Provenance`, `Receipt` enum. No breaking edits to existing types (change-freeze). Per [data-model.md](./data-model.md).
-- [ ] T009 [P] 🟢 Unit-test the new types in `crates/homn-types/tests/memory_types.rs`: serde round-trips, `SourceKind` open-set stability, `content_hash` determinism helper.
-- [ ] T010 🟢 Define the `Source` trait + `Batch`/`SourceError` in `crates/homn-sources/src/source.rs` exactly per [contracts/source-trait.md](./contracts/source-trait.md) (opaque serializable `Cursor`, `fetch_since`, read-only, no gate knowledge).
+- [x] T008 🟢 Add memory types to `crates/homn-types/src/` **additively** (new modules `observation.rs`, `source.rs`, `session.rs`, `receipt.rs`): `Observation`, `SourceKind` (incl. reserved `Email|Slack|GitHub`), `RawCapture`, `RedactionRef`, `RedactionKind`, `SpanRef`, `SessionId`, `Session`, `SessionKind`, `Cursor`, `Watermark`, `Provenance`, `Receipt` enum. No breaking edits to existing types (change-freeze). Per [data-model.md](./data-model.md).
+- [x] T009 [P] 🟢 Unit-test the new types in `crates/homn-types/tests/memory_types.rs`: serde round-trips, `SourceKind` open-set stability, `content_hash` determinism helper.
+- [x] T010 🟢 Define the `Source` trait + `Batch`/`SourceError` in `crates/homn-sources/src/source.rs` exactly per [contracts/source-trait.md](./contracts/source-trait.md) (opaque serializable `Cursor`, `fetch_since`, read-only, no gate knowledge).
 
 **Checkpoint**: shared types + Source trait compile; every user story can now build against them.
 
@@ -60,12 +60,12 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 
 ### Harness (buildable now)
 
-- [ ] T011 [P] [US1] 🟢 Define the eval schema in `crates/homn-eval/src/schema.rs`: `QuestionSet`, `Question { id, kind: Factual|Temporal|Commitment, question, expected_ref }`, `RunResult { recall_at_1, recall_at_3, per_kind, ops }`, `OpsMetrics { observations_per_day, disk_growth_bytes, ingest_cpu_pct, extraction_precision }`.
-- [ ] T012 [US1] 🟢 Implement `QuestionSet` TOML load/validate in `crates/homn-eval/src/schema.rs` (reject a set that isn't 10/10/10) + test in `crates/homn-eval/tests/schema.rs`.
-- [ ] T013 [US1] 🔵 Implement recall scoring in `crates/homn-eval/src/score.rs`: given a `recall(cue)` callable over the store, compute recall@k by checking whether `expected_ref` appears in top-k hits; hand-score fallback path when auto-match is ambiguous. (Interface-level now; wired to agidb at T036.)
+- [x] T011 [P] [US1] 🟢 Define the eval schema in `crates/homn-eval/src/schema.rs`: `QuestionSet`, `Question { id, kind: Factual|Temporal|Commitment, question, expected_ref }`, `RunResult { recall_at_1, recall_at_3, per_kind, ops }`, `OpsMetrics { observations_per_day, disk_growth_bytes, ingest_cpu_pct, extraction_precision }`.
+- [x] T012 [US1] 🟢 Implement `QuestionSet` TOML load/validate in `crates/homn-eval/src/schema.rs` (reject a set that isn't 10/10/10) + test in `crates/homn-eval/tests/schema.rs`.
+- [x] T013 [US1] 🔵 Implement recall scoring in `crates/homn-eval/src/score.rs`: given a `recall(cue)` callable over the store, compute recall@k by checking whether `expected_ref` appears in top-k hits; hand-score fallback path when auto-match is ambiguous. (Interface-level now; wired to agidb at T036.)
 - [ ] T014 [P] [US1] 🟢 Implement ops-metric collection in `crates/homn-eval/src/ops.rs` (observations/day from store counts, disk delta from file sizes, CPU sampling hook, extraction-precision sampler over N extractions).
 - [ ] T015 [US1] 🟢 Wire `homn eval run <set> --k` and `homn eval ingest <db>` subcommands into `crates/homn-bin/src/main.rs` (clap), `--json` output; `eval run` prints the gate verdict table (≥70 / 40–70 / <40).
-- [ ] T016 [P] [US1] 🟢 Document the gate + how to author a question set in `eval/README.md` and cross-link from [quickstart.md](./quickstart.md) (already drafted) — keep them consistent.
+- [x] T016 [P] [US1] 🟢 Document the gate + how to author a question set in `eval/README.md` and cross-link from [quickstart.md](./quickstart.md) (already drafted) — keep them consistent.
 
 ### Throwaway ingest + the run (needs capture)
 
@@ -207,7 +207,7 @@ Tasks are tagged with what (if anything) they wait on. Everything else is **buil
 
 ## Phase 10: Polish & cross-cutting (Phase 3 ship prep)
 
-- [ ] T062 [P] 🟢 Forward-compat test `crates/homn-sources/tests/poll_cursor.rs`: a trivial poll-cursor `Source` (history-id style) compiles + drives via the same trait, proving no breaking change is needed for Phase 3.5 connectors (FR-005a).
+- [x] T062 [P] 🟢 Forward-compat test `crates/homn-sources/tests/poll_cursor.rs`: a trivial poll-cursor `Source` (history-id style) compiles + drives via the same trait, proving no breaking change is needed for Phase 3.5 connectors (FR-005a).
 - [ ] T063 [P] 🟢 Extend the installer (`install/` + `install.sh`) to install Screenpipe if absent, install `homnd`+agidb, print the MCP link; reuse checksum verification; target < 5 min install-to-first-answer (SC-005).
 - [ ] T064 🟢 Rewrite `README.md` — "homn is the local human: memory, permissions, presence" — retire the two-meanings framing (Phase 3 task from tech-plan).
 - [ ] T065 [P] 🟢 Ensure every new subcommand has `--json` output and derived help (Constitution technical standard); test in `tests/cli_json.rs`.
