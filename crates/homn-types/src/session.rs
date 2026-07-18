@@ -43,6 +43,53 @@ impl From<&str> for SessionId {
     }
 }
 
+/// The kind of ambient session (v2 ambient-memory grouping).
+///
+/// A [`Session`] groups observations into an episode so consolidation can mint episode-level
+/// memories ("the July 14 call with X") instead of confetti. The boundary mechanism is
+/// source-agnostic: the connector variants let a Phase 3.5 mail thread or channel-day be one
+/// session using the same machinery as an app-focus block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    /// A block of continuous focus on a single app/window.
+    AppFocus,
+    /// A meeting (Zoom/Meet window active, or mic active).
+    Meeting,
+    /// Reserved — Phase 3.5: a mail thread treated as one session.
+    MailThread,
+    /// Reserved — Phase 3.5: a channel's activity for a day treated as one session.
+    ChannelDay,
+}
+
+/// An ambient session: a first-class grouping of observations with boundaries.
+///
+/// Reuses [`SessionId`] as its opaque identifier. `ended_at == None` means the session is still
+/// open. Note this is distinct from a Claude Code hook session even though both are keyed by
+/// [`SessionId`]; the `kind` disambiguates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Session {
+    /// Opaque session identifier.
+    pub id: SessionId,
+    /// What kind of session this is.
+    pub kind: SessionKind,
+    /// When the session opened.
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    /// When the session closed; `None` while still active.
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Human-readable label once an entity is known (e.g. "call with X").
+    pub label: Option<String>,
+    /// The app / channel this session is anchored to, if any.
+    pub app_or_channel: Option<String>,
+}
+
+impl Session {
+    /// Whether the session is still open (no end boundary detected yet).
+    pub fn is_open(&self) -> bool {
+        self.ended_at.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

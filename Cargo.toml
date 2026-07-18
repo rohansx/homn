@@ -10,6 +10,10 @@ members = [
     "crates/homn-mcp",
     "crates/homn-learning",
     "crates/homn-types",
+    "crates/homn-sources",
+    "crates/homn-gate",
+    "crates/homnd",
+    "crates/homn-eval",
 ]
 
 [workspace.package]
@@ -35,6 +39,10 @@ homn-tui       = { path = "crates/homn-tui", version = "0.1.0" }
 homn-mcp       = { path = "crates/homn-mcp", version = "0.1.0" }
 homn-learning  = { path = "crates/homn-learning", version = "0.1.0" }
 homn-daemon    = { path = "crates/homn-daemon", version = "0.1.0" }
+homn-sources   = { path = "crates/homn-sources", version = "0.1.0" }
+homn-gate      = { path = "crates/homn-gate", version = "0.1.0" }
+homnd          = { path = "crates/homnd", version = "0.1.0" }
+homn-eval      = { path = "crates/homn-eval", version = "0.1.0" }
 
 # Common ecosystem deps
 tokio          = { version = "1", features = ["full"] }

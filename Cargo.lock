@@ -701,6 +701,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "homn-eval"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
+name = "homn-gate"
+version = "0.1.0"
+dependencies = [
+ "homn-types",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "homn-hook"
 version = "0.1.0"
 dependencies = [
@@ -776,6 +794,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "homn-sources"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "homn-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "homn-tui"
 version = "0.1.0"
 dependencies = [
@@ -791,8 +822,22 @@ dependencies = [
 name = "homn-types"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+ "ulid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "homnd"
+version = "0.1.0"
+dependencies = [
+ "homn-gate",
+ "homn-sources",
+ "homn-types",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -1967,6 +2012,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
 dependencies = [
  "rand",
+ "serde",
  "web-time",
 ]
 

@@ -1,0 +1,17 @@
+[package]
+name = "homnd"
+description = "The ambient-memory ingestion daemon: sources -> gate -> dedupe -> sessionize -> store, on the homn-daemon chassis."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+
+[dependencies]
+homn-types   = { workspace = true }
+homn-sources = { workspace = true }
+homn-gate    = { workspace = true }
+serde        = { workspace = true }
+thiserror    = { workspace = true }
