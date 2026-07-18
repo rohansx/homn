@@ -15,6 +15,10 @@
 use async_trait::async_trait;
 use homn_types::{Cursor, RawCapture, SourceKind};
 
+pub mod dictation;
+
+pub use dictation::DictationPipe;
+
 /// Errors a source can raise while fetching.
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {

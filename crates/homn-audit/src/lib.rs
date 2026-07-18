@@ -18,14 +18,19 @@ use homn_types::{
 };
 use tokio_rusqlite::Connection;
 
+pub mod ledger;
+
+pub use ledger::{LedgerEntry, LedgerVerification};
+
 /// Current schema version shipped with this crate. Bump and add a new migration when changing
 /// the schema.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const MIGRATION_0001: &str = include_str!("../migrations/0001_initial.sql");
+const MIGRATION_0002: &str = include_str!("../migrations/0002_ledger.sql");
 
 /// Ordered list of `(version, sql)` migrations applied at startup. Append-only.
-const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_0001)];
+const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_0001), (2, MIGRATION_0002)];
 
 /// A decision about to be written — `DecisionRecord` minus the auto-generated `id`.
 #[derive(Debug, Clone)]

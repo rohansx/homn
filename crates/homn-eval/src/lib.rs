@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod ops;
 pub mod schema;
 pub mod score;
 

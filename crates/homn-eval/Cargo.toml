@@ -14,6 +14,8 @@ serde     = { workspace = true }
 toml      = { workspace = true }
 thiserror = { workspace = true }
 agidb     = { workspace = true, optional = true }
+rusqlite  = { workspace = true, optional = true }
+tokio     = { workspace = true, optional = true }
 
 [features]
-brain-agidb = ["dep:agidb"]
+brain-agidb = ["dep:agidb", "dep:rusqlite", "dep:tokio"]
