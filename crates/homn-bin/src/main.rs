@@ -117,6 +117,45 @@ enum Command {
         #[arg(long)]
         purge: bool,
     },
+    /// Verify the redaction/receipt hash chain (v2: US3 / FR-015).
+    Ledger {
+        /// Which ledger op to run.
+        #[command(subcommand)]
+        action: LedgerAction,
+    },
+    /// Phase-0 recall evaluation (v2: US1).
+    Eval {
+        /// Which eval op to run.
+        #[command(subcommand)]
+        action: EvalAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum LedgerAction {
+    /// Walk the hash-chained receipt ledger and report the first broken row, if any.
+    Verify {
+        /// Output JSON (`{"total","first_bad_seq","valid"}`) instead of human text.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EvalAction {
+    /// Validate a question-set TOML file (counts, ids, expected refs) without running it.
+    Validate {
+        /// Path to the question-set TOML.
+        file: PathBuf,
+    },
+    /// Score recall@k over ingested data. Needs the `brain-agidb` feature + a store.
+    Run {
+        /// Path to the question-set TOML.
+        file: PathBuf,
+        /// k for recall@k. Default 3.
+        #[arg(long, default_value_t = 3)]
+        k: u32,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -411,6 +450,12 @@ async fn main() -> anyhow::Result<()> {
                     config.audit.db_path.display(),
                 );
             }
+        }
+        Some(Command::Ledger { action }) => {
+            ledger_command(action).await?;
+        }
+        Some(Command::Eval { action }) => {
+            eval_command(action).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -868,4 +913,68 @@ fn print_setup_report(report: &homn_hook::setup::SetupReport) {
         ),
     }
     eprintln!("\ndone. edit your rules anytime with `homn rule edit`.");
+}
+
+// ===== `homn ledger verify` (v2: US3 / FR-015) ==========================================
+
+async fn ledger_command(action: LedgerAction) -> anyhow::Result<()> {
+    let LedgerAction::Verify { json } = action;
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+    let db = homn_audit::Db::open(&config.audit.db_path).await?;
+    let v = db.verify_ledger().await?;
+    if json {
+        let out = serde_json::json!({
+            "total": v.total,
+            "first_bad_seq": v.first_bad_seq,
+            "valid": v.is_valid(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else if v.is_valid() {
+        println!("ledger OK — {} receipts, hash chain verified", v.total);
+    } else {
+        let bad = v.first_bad_seq.unwrap_or(-1);
+        eprintln!(
+            "ledger BROKEN — {} receipts, first untrusted row seq={bad}",
+            v.total
+        );
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+// ===== `homn eval` (v2: US1) ===========================================================
+
+async fn eval_command(action: EvalAction) -> anyhow::Result<()> {
+    match action {
+        EvalAction::Validate { file } => {
+            let src = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("read {}: {e}", file.display()))?;
+            let set = homn_eval::QuestionSet::from_toml_str(&src)
+                .map_err(|e| anyhow::anyhow!("parse {}: {e}", file.display()))?;
+            set.validate(true)
+                .map_err(|e| anyhow::anyhow!("invalid question set: {e}"))?;
+            let counts = set.counts();
+            let n = set.questions.len();
+            println!(
+                "OK — {n} questions: {:?}",
+                counts
+                    .into_iter()
+                    .map(|(k, c)| (format!("{k:?}"), c))
+                    .collect::<Vec<_>>()
+            );
+            Ok(())
+        }
+        EvalAction::Run { file, k } => {
+            // Running a real eval needs a recall store. That store is the brain (agidb), behind
+            // `brain-agidb`, and the Phase-0 dogfood wiring lands with the daemon-integration lane.
+            // Until then, surface the dependency honestly rather than silently no-op'ing.
+            let _ = (file, k);
+            eprintln!(
+                "homn eval run needs the recall store (brain-agidb + a store path), wired in the \
+                 daemon-integration lane. Validate your set with `homn eval validate` for now."
+            );
+            std::process::exit(2);
+        }
+    }
 }

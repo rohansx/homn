@@ -1183,6 +1183,7 @@ dependencies = [
  "clap",
  "homn-audit",
  "homn-daemon",
+ "homn-eval",
  "homn-hook",
  "homn-learning",
  "homn-mcp",

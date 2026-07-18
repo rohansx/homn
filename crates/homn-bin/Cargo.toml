@@ -21,6 +21,7 @@ homn-audit    = { workspace = true }
 homn-mcp      = { workspace = true }
 homn-policy   = { workspace = true }
 homn-learning = { workspace = true }
+homn-eval     = { workspace = true }
 regex         = { workspace = true }
 arc-swap      = { workspace = true }
 
