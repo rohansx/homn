@@ -1,0 +1,202 @@
+# Phase 0 synthetic-flow question set — a deterministic "work week" for testing the
+# full homn flow without waiting for real capture.
+#
+# The corpus is built in crates/homn-eval/tests/synthetic_flow.rs (a screenpipe-shaped
+# sqlite + a dictation.jsonl) representing Mon–Fri 2026-07-13..17 of a developer ("Rohan")
+# working on homn, with 4 people (Sarah PM, Priya backend, Marco customer, Chris design),
+# explicit commitments, a revising belief about the brain, and temporal structure.
+#
+# This set is NOT a recall-quality gate (that needs a real week). It is a flow/regression
+# test: does ingest → agidb → recall → score → verdict run end-to-end and surface the right
+# chunks? expected_ref is a distinctive phrase present verbatim in the answering chunk.
+
+[meta]
+captured_week = "2026-07-13/2026-07-17"
+authored_by = "homn-synthetic"
+k = 3
+
+# ── 10 FACTUAL ─────────────────────────────────────────────────────────────
+
+[[question]]
+id = "f01"
+kind = "factual"
+question = "who did I email about the pricing quote"
+expected_ref = "pricing quote for the homn license"
+
+[[question]]
+id = "f02"
+kind = "factual"
+question = "what did Sarah promise to deliver"
+expected_ref = "user research by Wednesday"
+
+[[question]]
+id = "f03"
+kind = "factual"
+question = "what does Priya owe me"
+expected_ref = "API spec"
+
+[[question]]
+id = "f04"
+kind = "factual"
+question = "what was the Monday standup about"
+expected_ref = "shipping the Rhai gate"
+
+[[question]]
+id = "f05"
+kind = "factual"
+question = "what did I send to Marco on Friday"
+expected_ref = "pricing quote"
+
+[[question]]
+id = "f06"
+kind = "factual"
+question = "what was the Friday demo result"
+expected_ref = "agidb as-is"
+
+[[question]]
+id = "f07"
+kind = "factual"
+question = "what did Chris say about the face"
+expected_ref = "cursor buddy"
+
+[[question]]
+id = "f08"
+kind = "factual"
+question = "what did I build Monday afternoon"
+expected_ref = "redaction bank"
+
+[[question]]
+id = "f09"
+kind = "factual"
+question = "what was the one on one with Sarah about"
+expected_ref = "Phase 0 plan"
+
+[[question]]
+id = "f10"
+kind = "factual"
+question = "what license price did I quote Marco"
+expected_ref = "five k per year"
+
+# ── 10 TEMPORAL ────────────────────────────────────────────────────────────
+
+[[question]]
+id = "t01"
+kind = "temporal"
+question = "what did I decide Wednesday about the brain"
+expected_ref = "agidb recall is shaky"
+
+[[question]]
+id = "t02"
+kind = "temporal"
+question = "what did I work on Monday morning before slack"
+expected_ref = "Rhai ingest policy engine"
+
+[[question]]
+id = "t03"
+kind = "temporal"
+question = "what did I do Thursday morning"
+expected_ref = "API spec is overdue"
+
+[[question]]
+id = "t04"
+kind = "temporal"
+question = "when did I send the pricing quote to Marco"
+expected_ref = "Friday"
+
+[[question]]
+id = "t05"
+kind = "temporal"
+question = "what did I say Monday about shipping"
+expected_ref = "Rhai gate this week"
+
+[[question]]
+id = "t06"
+kind = "temporal"
+question = "what changed about the brain decision by Friday"
+expected_ref = "agidb it is"
+
+[[question]]
+id = "t07"
+kind = "temporal"
+question = "what was I considering Wednesday about ctxgraph"
+expected_ref = "merge ctxgraph retrieval"
+
+[[question]]
+id = "t08"
+kind = "temporal"
+question = "what did Sarah and I agree on Tuesday"
+expected_ref = "Phase 0 plan"
+
+[[question]]
+id = "t09"
+kind = "temporal"
+question = "what did I wire Tuesday afternoon"
+expected_ref = "recall and timeline MCP tools"
+
+[[question]]
+id = "t10"
+kind = "temporal"
+question = "what did I confirm with Marco on Thursday"
+expected_ref = "pricing quote Friday morning"
+
+# ── 10 COMMITMENT ─────────────────────────────────────────────────────────
+
+[[question]]
+id = "c01"
+kind = "commitment"
+question = "what did I promise Marco"
+expected_ref = "pricing quote by Friday"
+
+[[question]]
+id = "c02"
+kind = "commitment"
+question = "what does Priya owe me and by when"
+expected_ref = "API spec by Tuesday"
+
+[[question]]
+id = "c03"
+kind = "commitment"
+question = "what did Sarah promise and by when"
+expected_ref = "user research by Wednesday"
+
+[[question]]
+id = "c04"
+kind = "commitment"
+question = "what is overdue from Priya"
+expected_ref = "API spec is overdue"
+
+[[question]]
+id = "c05"
+kind = "commitment"
+question = "what did I commit to ship this week"
+expected_ref = "Rhai gate this week"
+
+[[question]]
+id = "c06"
+kind = "commitment"
+question = "what did I say I would send Friday morning"
+expected_ref = "pricing quote Friday morning"
+
+[[question]]
+id = "c07"
+kind = "commitment"
+question = "what is my open commitment to Marco"
+expected_ref = "pricing quote"
+
+[[question]]
+id = "c08"
+kind = "commitment"
+question = "what did Priya commit to deliver"
+expected_ref = "API spec to you by Tuesday"
+
+[[question]]
+id = "c09"
+kind = "commitment"
+question = "when is the pricing quote due"
+expected_ref = "by Friday"
+
+[[question]]
+id = "c10"
+kind = "commitment"
+question = "what did Sarah owe me by Wednesday"
+expected_ref = "user research by Wednesday"
