@@ -23,6 +23,12 @@ rmcp         = { workspace = true }
 arc-swap     = { workspace = true }
 async-trait  = { workspace = true }
 chrono       = { workspace = true }
+agidb        = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enable the agidb-backed Brain so the MCP recall/timeline tools query a real agidb brain.
+brain-agidb = ["dep:agidb"]
 
 [dev-dependencies]
 ulid         = { workspace = true }

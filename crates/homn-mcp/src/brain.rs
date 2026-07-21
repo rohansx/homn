@@ -236,6 +236,85 @@ pub fn shared(brain: impl Brain + 'static) -> Arc<dyn Brain> {
     Arc::new(brain)
 }
 
+// ============================================================================
+// agidb-backed brain (feature-gated) — the real recall/timeline store
+// ============================================================================
+
+/// A [`Brain`] backed by a live [`agidb::Agidb`] handle. Construct with [`AgidbBrain::new`];
+/// cheap to clone via `Arc`. recall uses `Agidb::recall(Query)` (with `as_of` → `Query::as_of`);
+/// timeline uses `Agidb::timeline`. Read-path only, no network (Invariant 2).
+#[cfg(feature = "brain-agidb")]
+pub struct AgidbBrain {
+    brain: std::sync::Arc<agidb::Agidb>,
+}
+
+#[cfg(feature = "brain-agidb")]
+impl AgidbBrain {
+    /// Wrap an existing agidb handle.
+    pub fn new(brain: std::sync::Arc<agidb::Agidb>) -> Self {
+        Self { brain }
+    }
+}
+
+#[cfg(feature = "brain-agidb")]
+#[async_trait::async_trait]
+impl Brain for AgidbBrain {
+    async fn recall(
+        &self,
+        cue: &str,
+        as_of: Option<DateTime<Utc>>,
+        k: usize,
+    ) -> anyhow::Result<Vec<RecallHit>> {
+        let mut q = agidb::Query::cue(cue).with_k(k);
+        if let Some(t) = as_of {
+            q = q.with_as_of(t);
+        }
+        let recall = self.brain.recall(q).await.map_err(|e| anyhow::anyhow!(e))?;
+        Ok(recall
+            .matches
+            .into_iter()
+            .take(k)
+            .map(|m| RecallHit {
+                text: m.text,
+                source: m.provenance.source,
+                app: None, // agidb doesn't surface an app field on RecallMatch
+                captured_at: m.valid_time.start,
+                confidence: m.confidence,
+                observation_id: format!("ep-{}", m.episode_id),
+            })
+            .collect())
+    }
+
+    async fn timeline(
+        &self,
+        subject: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<TimelineEntry>> {
+        // subject "" → None (agidb::timeline treats None as "no subject filter").
+        let subj = if subject.trim().is_empty() {
+            None
+        } else {
+            Some(subject)
+        };
+        let episodes = self
+            .brain
+            .timeline(subj, from, to, 200)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(episodes
+            .into_iter()
+            .map(|ep| TimelineEntry {
+                at: ep.valid_time.start,
+                text: ep.text,
+                session: ep.provenance.session_id,
+                source: ep.provenance.source,
+                observation_id: format!("ep-{}", ep.id),
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +406,118 @@ mod tests {
         let hits = brain.recall("note", Some(as_of), 5).await.unwrap();
         assert_eq!(hits.len(), 1, "only the past observation is visible as_of");
         assert_eq!(hits[0].text, "old note");
+    }
+}
+
+/// agidb-backed brain tests — only compiled with the `brain-agidb` feature.
+#[cfg(all(test, feature = "brain-agidb"))]
+mod agidb_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn ts(day: &str) -> DateTime<Utc> {
+        // "2026-07-13" → that day at noon UTC.
+        chrono::Utc
+            .with_ymd_and_hms(
+                day[0..4].parse().unwrap(),
+                day[5..7].parse().unwrap(),
+                day[8..10].parse().unwrap(),
+                12,
+                0,
+                0,
+            )
+            .unwrap()
+    }
+
+    fn brain_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "homn-mcp-agidbbrain-{}-{label}-{}.agidb",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    async fn make_brain(dir: &std::path::Path) -> std::sync::Arc<agidb::Agidb> {
+        let b = agidb::Agidb::open_with(
+            agidb::AgidbConfig::new(dir).with_extractor(agidb::ExtractorSetup::Null),
+        )
+        .await
+        .unwrap();
+        // Three episodes with explicit valid_times (Mon/Tue/Fri).
+        for (text, day) in [
+            ("Sarah promised the quote by Friday", "2026-07-13"),
+            ("Priya owes the API spec by Tuesday", "2026-07-14"),
+            ("shipped the pricing quote to Marco", "2026-07-17"),
+        ] {
+            let ctx = agidb::ObserveContext {
+                observation_time: ts(day),
+                provenance: agidb::Provenance {
+                    source: "test".to_owned(),
+                    ..Default::default()
+                },
+            };
+            b.observe_with_context(text, ctx).await.unwrap();
+        }
+        b.flush().await.unwrap();
+        std::sync::Arc::new(b)
+    }
+
+    #[tokio::test]
+    async fn agidb_brain_recall_returns_provenance_hits() {
+        let dir = brain_dir("recall");
+        let agidb_brain = make_brain(&dir).await;
+        let brain = AgidbBrain::new(agidb_brain);
+        let hits = brain.recall("pricing quote Marco", None, 3).await.unwrap();
+        assert!(!hits.is_empty(), "recall must surface the Marco episode");
+        assert!(
+            hits.iter()
+                .any(|h| h.text.contains("pricing quote to Marco")),
+            "hit text carries the episode: {hits:?}"
+        );
+        let h = hits
+            .iter()
+            .find(|h| h.text.contains("pricing quote"))
+            .unwrap();
+        assert_eq!(h.source, "test", "provenance source carried through");
+        assert!(
+            h.observation_id.starts_with("ep-"),
+            "observation_id is an ep ref"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn agidb_brain_timeline_is_chronological_in_window() {
+        let dir = brain_dir("timeline");
+        let agidb_brain = make_brain(&dir).await;
+        let brain = AgidbBrain::new(agidb_brain);
+        let from = ts("2026-07-13");
+        let to = ts("2026-07-17");
+        // Empty subject → no subject filter → all episodes in the window.
+        let entries = brain.timeline("", from, to).await.unwrap();
+        assert_eq!(
+            entries.len(),
+            3,
+            "all three episodes are in the Mon–Fri window"
+        );
+        // Chronological by valid_time.start.
+        assert_eq!(entries[0].text, "Sarah promised the quote by Friday");
+        assert_eq!(entries[1].text, "Priya owes the API spec by Tuesday");
+        assert_eq!(entries[2].text, "shipped the pricing quote to Marco");
+        // Window excludes nothing here; narrow it to Tue only.
+        let tue = brain
+            .timeline("", ts("2026-07-14"), ts("2026-07-14"))
+            .await
+            .unwrap();
+        assert_eq!(
+            tue.len(),
+            1,
+            "the Tue-only window returns just the Tue episode"
+        );
+        assert_eq!(tue[0].text, "Priya owes the API spec by Tuesday");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

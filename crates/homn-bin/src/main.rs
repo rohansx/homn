@@ -96,6 +96,10 @@ enum Command {
     Mcp {
         #[command(subcommand)]
         transport: Option<McpTransport>,
+        /// Path to an agidb brain directory to serve `recall`/`timeline` against. Needs
+        /// `--features brain-agidb`. Without it, the recall/timeline tools return "no brain".
+        #[arg(long)]
+        brain: Option<PathBuf>,
     },
     /// Invoked by Claude Code hooks via ~/.claude/settings.json. T029 implements.
     Hook {
@@ -399,7 +403,7 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", serde_json::to_string(&response)?);
         }
-        Some(Command::Mcp { transport }) => {
+        Some(Command::Mcp { transport, brain }) => {
             // T078: start the MCP server. stdio is what Claude Code's MCP config invokes;
             // HTTP transport (T071) lands in a follow-up.
             let config_path = homn_daemon::config::default_config_path();
@@ -419,11 +423,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             let audit = std::sync::Arc::new(homn_audit::Db::open(&config.audit.db_path).await?);
+            let brain = open_brain(brain.as_deref()).await?;
             let state = homn_mcp::McpState {
                 engine,
                 rules: rules_handle,
                 audit,
-                brain: None,
+                brain,
             };
             match transport {
                 Some(McpTransport::Stdio) | None => {
@@ -1171,6 +1176,34 @@ fn remove_exclude(path: &Path, target: &str, domain: bool) -> anyhow::Result<boo
     }
     std::fs::write(path, out)?;
     Ok(removed)
+}
+
+/// Open an agidb brain for the MCP `recall`/`timeline` tools. `None` → no brain (the tools
+/// return a clear "no brain" error). Needs `--features brain-agidb`; without the feature, any
+/// `--brain` path is reported as needing a rebuild.
+async fn open_brain(
+    path: Option<&Path>,
+) -> anyhow::Result<Option<std::sync::Arc<dyn homn_mcp::Brain>>> {
+    let Some(path) = path else { return Ok(None) };
+    #[cfg(not(feature = "brain-agidb"))]
+    {
+        anyhow::bail!(
+            "`homn mcp --brain {}` needs the agidb brain. Rebuild with:\n  \
+             cargo build -p homn-bin --features brain-agidb",
+            path.display()
+        );
+    }
+    #[cfg(feature = "brain-agidb")]
+    {
+        let brain = agidb::Agidb::open_with(
+            agidb::AgidbConfig::new(path).with_extractor(agidb::ExtractorSetup::Null),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("open brain {}: {e}", path.display()))?;
+        Ok(Some(std::sync::Arc::new(homn_mcp::AgidbBrain::new(
+            std::sync::Arc::new(brain),
+        ))))
+    }
 }
 
 // ===== `homn eval` (v2: US1) ===========================================================

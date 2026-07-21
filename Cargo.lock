@@ -1301,6 +1301,7 @@ dependencies = [
 name = "homn-mcp"
 version = "0.1.0"
 dependencies = [
+ "agidb",
  "anyhow",
  "arc-swap",
  "async-trait",

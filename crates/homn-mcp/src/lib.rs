@@ -24,6 +24,8 @@
 mod brain;
 mod rate_limit;
 
+#[cfg(feature = "brain-agidb")]
+pub use brain::AgidbBrain;
 pub use brain::{Brain, MemoryBrain, RecallHit, RecordingBrain, TimelineEntry};
 pub use rate_limit::{RateLimited, RateLimiter, DEFAULT_MAX_PER_WINDOW, DEFAULT_WINDOW};
 
