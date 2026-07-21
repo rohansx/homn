@@ -391,8 +391,19 @@ pub async fn replay_ingest(
     for (label, rows) in raw {
         rows_read += rows.len() as u64;
         for chunk in chunk_rows(&rows) {
+            // Stamp the episode with the capture time (chunk.minute) as valid_time — not
+            // ingest time — so bi-temporal / time-window recall can filter by when the
+            // activity actually happened. Falls back to now() if the minute won't parse.
+            let valid_time = parse_minute(&chunk.minute).unwrap_or_else(chrono::Utc::now);
+            let ctx = agidb::ObserveContext {
+                observation_time: valid_time,
+                provenance: agidb::Provenance {
+                    source: label.to_owned(),
+                    ..agidb::Provenance::default()
+                },
+            };
             brain
-                .observe_with(&chunk.text, label)
+                .observe_with_context(&chunk.text, ctx)
                 .await
                 .map_err(|e| IngestError::Agidb(e.to_string()))?;
             chunks_stored += 1;
@@ -402,6 +413,13 @@ pub async fn replay_ingest(
         rows_read,
         chunks_stored,
     })
+}
+
+/// Parse a `chunk.minute` bucket ("YYYY-MM-DDTHH:MM") into a UTC instant, appending :00Z.
+fn parse_minute(minute: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(&format!("{minute}:00Z"))
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
 /// A [`Recaller`] backed by an agidb brain, for `homn eval run`.
@@ -456,18 +474,51 @@ impl Recaller for AgidbRecaller {
         let brain = self.brain.clone();
         let cue = cue.to_owned();
         let result = block_on_with(&self.rt, async move { brain.recall_cue(cue).await });
-        match result {
-            Ok(recall) => recall
-                .matches
-                .into_iter()
-                .take(k)
-                .map(|m| Hit {
-                    reference: format!("ep-{}", m.episode_id),
-                    text: m.text,
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        }
+        to_hits(result, k)
+    }
+
+    fn recall_with_window(
+        &self,
+        cue: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+        k: usize,
+    ) -> Vec<Hit> {
+        let Some(from) = from else {
+            return self.recall(cue, k);
+        };
+        let Some(to) = to else {
+            return self.recall(cue, k);
+        };
+        let (Ok(from_dt), Ok(to_dt)) = (
+            chrono::DateTime::parse_from_rfc3339(from).map(|d| d.with_timezone(&chrono::Utc)),
+            chrono::DateTime::parse_from_rfc3339(to).map(|d| d.with_timezone(&chrono::Utc)),
+        ) else {
+            return self.recall(cue, k);
+        };
+        let brain = self.brain.clone();
+        let cue = cue.to_owned();
+        let query = agidb::Query::cue(cue)
+            .with_time_window(from_dt, to_dt)
+            .with_k(k);
+        let result = block_on_with(&self.rt, async move { brain.recall(query).await });
+        to_hits(result, k)
+    }
+}
+
+/// Map an agidb `Recall` result into scored [`Hit`]s, taking the top `k`.
+fn to_hits(result: Result<agidb::Recall, agidb::core::AgidbError>, k: usize) -> Vec<Hit> {
+    match result {
+        Ok(recall) => recall
+            .matches
+            .into_iter()
+            .take(k)
+            .map(|m| Hit {
+                reference: format!("ep-{}", m.episode_id),
+                text: m.text,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 

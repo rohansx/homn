@@ -25,6 +25,21 @@ pub struct Hit {
 pub trait Recaller {
     /// Return up to `k` ranked hits for `cue`, best first.
     fn recall(&self, cue: &str, k: usize) -> Vec<Hit>;
+
+    /// Recall with an optional `[from, to]` temporal window (ISO-8601 strings). Brains that
+    /// support temporal retrieval (agidb `Query::time_window`) filter candidates to episodes
+    /// whose valid_time overlaps the window. The default ignores the window and delegates to
+    /// [`recall`](Self::recall), so brains without temporal support keep working unchanged.
+    fn recall_with_window(
+        &self,
+        cue: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+        k: usize,
+    ) -> Vec<Hit> {
+        let _ = (from, to);
+        self.recall(cue, k)
+    }
 }
 
 /// Whether `expected_ref` is satisfied by any of the top-`k` hits.
@@ -76,7 +91,14 @@ pub fn score(set: &QuestionSet, recaller: &dyn Recaller, k: usize) -> RunResult 
     let mut per_kind_hit_k: BTreeMap<QuestionKind, usize> = BTreeMap::new();
 
     for q in &set.questions {
-        let hits = recaller.recall(&q.question, k);
+        let hits = match q
+            .time_window
+            .as_ref()
+            .map(|(f, t)| (f.as_str(), t.as_str()))
+        {
+            Some((f, t)) => recaller.recall_with_window(&q.question, Some(f), Some(t), k),
+            None => recaller.recall(&q.question, k),
+        };
         *per_kind_total.entry(q.kind).or_default() += 1;
         if is_hit(&q.expected_ref, &hits, 1) {
             hits_at_1 += 1;
@@ -182,6 +204,7 @@ mod tests {
             question: question.to_owned(),
             expected_ref: expected.to_owned(),
             notes: String::new(),
+            time_window: None,
         }
     }
 

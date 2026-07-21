@@ -88,6 +88,7 @@ mod tests {
             question: q.to_owned(),
             expected_ref: exp.to_owned(),
             notes: String::new(),
+            time_window: None,
         }
     }
     #[allow(dead_code)]

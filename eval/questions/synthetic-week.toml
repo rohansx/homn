@@ -78,66 +78,79 @@ question = "what license price did I quote Marco"
 expected_ref = "five k per year"
 
 # ── 10 TEMPORAL ────────────────────────────────────────────────────────────
+# Each temporal question carries a `time_window` over the day the answer lives on, so the
+# agidb-backed recaller can use Query::time_window (the new temporal-retrieval feature) to
+# filter to that day — the fix for cues that share no tokens with the answer.
 
 [[question]]
 id = "t01"
 kind = "temporal"
 question = "what did I decide Wednesday about the brain"
 expected_ref = "agidb recall is shaky"
+time_window = ["2026-07-15T00:00:00Z", "2026-07-15T23:59:59Z"]
 
 [[question]]
 id = "t02"
 kind = "temporal"
 question = "what did I work on Monday morning before slack"
 expected_ref = "Rhai ingest policy engine"
+time_window = ["2026-07-13T00:00:00Z", "2026-07-13T23:59:59Z"]
 
 [[question]]
 id = "t03"
 kind = "temporal"
-question = "what did I do Thursday morning"
+question = "what did I do Thursday morning about the spec"
 expected_ref = "API spec is overdue"
+time_window = ["2026-07-16T00:00:00Z", "2026-07-16T23:59:59Z"]
 
 [[question]]
 id = "t04"
 kind = "temporal"
 question = "when did I send the pricing quote to Marco"
 expected_ref = "Friday"
+time_window = ["2026-07-17T00:00:00Z", "2026-07-17T23:59:59Z"]
 
 [[question]]
 id = "t05"
 kind = "temporal"
 question = "what did I say Monday about shipping"
 expected_ref = "Rhai gate this week"
+time_window = ["2026-07-13T00:00:00Z", "2026-07-13T23:59:59Z"]
 
 [[question]]
 id = "t06"
 kind = "temporal"
 question = "what changed about the brain decision by Friday"
 expected_ref = "agidb it is"
+time_window = ["2026-07-17T00:00:00Z", "2026-07-17T23:59:59Z"]
 
 [[question]]
 id = "t07"
 kind = "temporal"
 question = "what was I considering Wednesday about ctxgraph"
 expected_ref = "merge ctxgraph retrieval"
+time_window = ["2026-07-15T00:00:00Z", "2026-07-15T23:59:59Z"]
 
 [[question]]
 id = "t08"
 kind = "temporal"
 question = "what did Sarah and I agree on Tuesday"
 expected_ref = "Phase 0 plan"
+time_window = ["2026-07-14T00:00:00Z", "2026-07-14T23:59:59Z"]
 
 [[question]]
 id = "t09"
 kind = "temporal"
 question = "what did I wire Tuesday afternoon"
 expected_ref = "recall and timeline MCP tools"
+time_window = ["2026-07-14T00:00:00Z", "2026-07-14T23:59:59Z"]
 
 [[question]]
 id = "t10"
 kind = "temporal"
 question = "what did I confirm with Marco on Thursday"
 expected_ref = "pricing quote Friday morning"
+time_window = ["2026-07-16T00:00:00Z", "2026-07-16T23:59:59Z"]
 
 # ── 10 COMMITMENT ─────────────────────────────────────────────────────────
 

@@ -47,6 +47,12 @@ pub struct Question {
     /// Optional hand-scoring guidance when auto-match is ambiguous.
     #[serde(default)]
     pub notes: String,
+    /// Optional temporal window `[from, to]` (ISO-8601 strings). When set, a brain that
+    /// supports temporal retrieval (agidb `Query::time_window`) filters candidates to episodes
+    /// whose valid_time overlaps the window — the fix for "when did X happen" cues that share
+    /// no tokens with the answer. Brains without temporal support ignore it.
+    #[serde(default)]
+    pub time_window: Option<(String, String)>,
 }
 
 /// Metadata about a captured week and the run.
@@ -166,6 +172,7 @@ mod tests {
                     question: format!("q{i}"),
                     expected_ref: format!("ref{i}"),
                     notes: String::new(),
+                    time_window: None,
                 })
                 .collect::<Vec<_>>()
         };
