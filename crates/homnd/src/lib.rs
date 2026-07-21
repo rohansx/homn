@@ -16,11 +16,16 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod control;
 pub mod dedupe;
 pub mod pipeline;
 pub mod session;
 pub mod store;
 
+pub use control::{
+    default_socket_path as default_control_socket_path, ControlClient, ControlOp, ControlRequest,
+    ControlResponse, ControlServer, ControlState,
+};
 pub use dedupe::Dedupe;
 pub use pipeline::{drain, Pipeline, PipelineStats, Processed, TickResult};
 pub use session::Sessionizer;

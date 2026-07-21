@@ -136,7 +136,6 @@ enum Command {
     /// Add/list/remove a capture-exclude rule in `policies/ingest.rhai` (v2: US3 / T042).
     /// Hot-reloaded by a running daemon.
     Exclude {
-        /// The app glob (e.g. `Slack*`) or domain (e.g. `github.com`) to exclude. Omit with `--list`.
         target: Option<String>,
         /// Treat <target> as a domain (exact match) instead of an app glob.
         #[arg(long)]
@@ -148,6 +147,31 @@ enum Command {
         #[arg(long)]
         remove: bool,
         /// Emit JSON (`{ "excludes": [{kind,target}] }`) for `--list`; machine-readable confirm otherwise.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Control the ambient-memory ingestion daemon (homnd) — v2: T029.
+    Capture {
+        #[command(subcommand)]
+        action: CaptureAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CaptureAction {
+    /// Run the homnd daemon in the foreground (binds the control socket). For systemd / debugging;
+    /// `homn capture start` spawns this backgrounded.
+    Daemon,
+    /// Start (or resume) capture. If the daemon isn't running, spawns it backgrounded; if it is,
+    /// resumes from pause.
+    Start,
+    /// Stop (pause) capture — the daemon stays up but stops ingesting. Alias: `homn pause`.
+    Stop,
+    /// Halt capture immediately (alias for `stop`).
+    Pause,
+    /// Daemon state: running, paused, sources, counters. `--json` for machine-readable output.
+    Status {
+        /// Emit JSON (the raw `ControlResponse`) instead of human text.
         #[arg(long)]
         json: bool,
     },
@@ -504,6 +528,9 @@ async fn main() -> anyhow::Result<()> {
             json,
         }) => {
             exclude_command(target, domain, list, remove, json).await?;
+        }
+        Some(Command::Capture { action }) => {
+            capture_command(action).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -1204,6 +1231,87 @@ async fn open_brain(
             std::sync::Arc::new(brain),
         ))))
     }
+}
+
+// ===== `homn capture` (v2: T029) ======================================================
+
+async fn capture_command(action: CaptureAction) -> anyhow::Result<()> {
+    use homnd::{ControlClient, ControlOp, ControlServer, ControlState};
+    let sock = homnd::default_control_socket_path();
+    match action {
+        CaptureAction::Daemon => {
+            // Foreground: bind the control socket and serve forever. The real ingestion
+            // pipeline (sources → gate → store) plugs in here when ScreenpipeTail (T025)
+            // lands; for now the daemon is the control surface + a paused flag + zeroed stats.
+            let state = ControlState::new();
+            let server = ControlServer::bind(&sock)
+                .await
+                .map_err(|e| anyhow::anyhow!("bind {}: {e}", sock.display()))?;
+            tracing::info!(socket = %sock.display(), "homnd control daemon ready");
+            eprintln!("homnd ready on {}", sock.display());
+            server.serve(state).await?;
+            Ok(())
+        }
+        CaptureAction::Start => {
+            // If a daemon is up, resume. Otherwise spawn one backgrounded.
+            if let Ok(resp) = ControlClient::request(&sock, ControlOp::Status).await {
+                if resp.paused {
+                    ControlClient::request(&sock, ControlOp::Resume).await?;
+                    eprintln!("resumed capture (was paused)");
+                } else {
+                    eprintln!("capture already running");
+                }
+                return Ok(());
+            }
+            spawn_daemon_backgrounded()?;
+            eprintln!("started homnd (backgrounded); socket at {}", sock.display());
+            Ok(())
+        }
+        CaptureAction::Stop | CaptureAction::Pause => {
+            let resp = ControlClient::request(&sock, ControlOp::Pause).await?;
+            if resp.ok {
+                eprintln!("paused capture");
+            } else {
+                eprintln!("pause failed: {}", resp.error.unwrap_or_default());
+            }
+            Ok(())
+        }
+        CaptureAction::Status { json } => {
+            let resp = ControlClient::request(&sock, ControlOp::Status).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                println!("running   : {}", resp.running);
+                println!("paused    : {}", resp.paused);
+                println!("started_at: {}", resp.started_at);
+                println!(
+                    "counters  : fetched={} dropped={} deduped={} stored={}",
+                    resp.stats.fetched, resp.stats.dropped, resp.stats.deduped, resp.stats.stored
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Spawn `homn capture daemon` as a detached background process.
+fn spawn_daemon_backgrounded() -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe()?;
+    let mut cmd = Command::new(&exe);
+    cmd.arg("capture").arg("daemon");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // New process group so it survives the parent terminal closing.
+    cmd.process_group(0);
+    let _child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("spawn homnd: {e}"))?;
+    // Give the socket a moment to bind before `Start` returns.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    Ok(())
 }
 
 // ===== `homn eval` (v2: US1) ===========================================================

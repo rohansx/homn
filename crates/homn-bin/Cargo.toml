@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 homn-daemon   = { workspace = true }
+homnd         = { workspace = true }
 homn-types    = { workspace = true }
 homn-hook     = { workspace = true }
 homn-audit    = { workspace = true }

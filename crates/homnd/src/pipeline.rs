@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ use crate::session::Sessionizer;
 use crate::store::Store;
 
 /// Per-pipeline counters surfaced by `homn status`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineStats {
     /// Items the source produced.
     pub fetched: u64,
@@ -80,7 +81,7 @@ impl Pipeline {
 
     /// Read the current stats (for `homn status`).
     pub async fn stats(&self) -> PipelineStats {
-        self.stats.lock().await.clone()
+        *self.stats.lock().await
     }
 
     /// Drain one batch from the source through the pipeline, advancing the watermark. Returns

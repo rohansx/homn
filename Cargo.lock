@@ -1190,6 +1190,7 @@ dependencies = [
  "homn-mcp",
  "homn-policy",
  "homn-types",
+ "homnd",
  "humantime",
  "is-terminal",
  "regex",
