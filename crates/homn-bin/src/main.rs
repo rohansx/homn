@@ -161,7 +161,15 @@ enum Command {
 enum CaptureAction {
     /// Run the homnd daemon in the foreground (binds the control socket). For systemd / debugging;
     /// `homn capture start` spawns this backgrounded.
-    Daemon,
+    Daemon {
+        /// Path to an agidb brain directory to ingest into. Needs `--features brain-agidb`.
+        /// Omit for an ephemeral in-memory store (smoke run; ingests lost on restart).
+        #[arg(long)]
+        brain: Option<PathBuf>,
+        /// Path to Screenpipe's `db.sqlite`. Defaults to `~/.screenpipe/db.sqlite`.
+        #[arg(long)]
+        screenpipe_db: Option<PathBuf>,
+    },
     /// Start (or resume) capture. If the daemon isn't running, spawns it backgrounded; if it is,
     /// resumes from pause.
     Start,
@@ -1236,20 +1244,30 @@ async fn open_brain(
 // ===== `homn capture` (v2: T029) ======================================================
 
 async fn capture_command(action: CaptureAction) -> anyhow::Result<()> {
-    use homnd::{ControlClient, ControlOp, ControlServer, ControlState};
+    use homnd::{ControlClient, ControlOp};
     let sock = homnd::default_control_socket_path();
     match action {
-        CaptureAction::Daemon => {
-            // Foreground: bind the control socket and serve forever. The real ingestion
-            // pipeline (sources → gate → store) plugs in here when ScreenpipeTail (T025)
-            // lands; for now the daemon is the control surface + a paused flag + zeroed stats.
-            let state = ControlState::new();
-            let server = ControlServer::bind(&sock)
-                .await
-                .map_err(|e| anyhow::anyhow!("bind {}: {e}", sock.display()))?;
-            tracing::info!(socket = %sock.display(), "homnd control daemon ready");
-            eprintln!("homnd ready on {}", sock.display());
-            server.serve(state).await?;
+        CaptureAction::Daemon {
+            brain,
+            screenpipe_db,
+        } => {
+            // Foreground: build the source/gate/store/pipeline + control socket and run the
+            // drain loop (T028). `homn capture start` spawns this backgrounded.
+            let config_path = homn_daemon::config::default_config_path();
+            let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+            let screenpipe_db = screenpipe_db.unwrap_or_else(|| {
+                std::env::var("HOME")
+                    .map(|h| PathBuf::from(h).join(".screenpipe/db.sqlite"))
+                    .unwrap_or_else(|_| PathBuf::from(".screenpipe/db.sqlite"))
+            });
+            let cfg = homnd::CaptureDaemonConfig {
+                screenpipe_db,
+                brain_path: brain,
+                ingest_policy_path: config.policy.policies_dir.join("ingest.rhai"),
+                audit_db_path: config.audit.db_path.clone(),
+                socket_path: homnd::default_control_socket_path(),
+            };
+            homnd::run_capture_daemon(cfg).await?;
             Ok(())
         }
         CaptureAction::Start => {

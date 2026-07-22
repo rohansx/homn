@@ -17,6 +17,7 @@
 #![warn(missing_docs)]
 
 pub mod control;
+pub mod daemon;
 pub mod dedupe;
 pub mod pipeline;
 pub mod session;
@@ -26,6 +27,7 @@ pub use control::{
     default_socket_path as default_control_socket_path, ControlClient, ControlOp, ControlRequest,
     ControlResponse, ControlServer, ControlState,
 };
+pub use daemon::{run_capture_daemon, CaptureDaemonConfig};
 pub use dedupe::Dedupe;
 pub use pipeline::{drain, Pipeline, PipelineStats, Processed, TickResult};
 pub use session::Sessionizer;

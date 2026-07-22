@@ -42,4 +42,4 @@ default = []
 # Enable the agidb-backed brain for `homn eval run` / `homn eval ingest` (Phase 0) and for
 # `homn mcp --brain` (the recall/timeline tools query a real agidb brain).
 # CI builds without it; local dogfood builds with `--features brain-agidb`.
-brain-agidb = ["homn-eval/brain-agidb", "homn-mcp/brain-agidb", "dep:agidb"]
+brain-agidb = ["homn-eval/brain-agidb", "homn-mcp/brain-agidb", "homnd/brain-agidb", "dep:agidb"]
