@@ -16,8 +16,10 @@ use async_trait::async_trait;
 use homn_types::{Cursor, RawCapture, SourceKind};
 
 pub mod dictation;
+pub mod screenpipe;
 
 pub use dictation::DictationPipe;
+pub use screenpipe::ScreenpipeTail;
 
 /// Errors a source can raise while fetching.
 #[derive(Debug, thiserror::Error)]

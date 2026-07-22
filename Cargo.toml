@@ -77,7 +77,7 @@ xxhash-rust    = { version = "0.8", features = ["xxh3"] }
 # feature is enabled (local dogfood builds; CI never compiles it).
 # cloakpipe/ctxgraph deliberately absent: not consumable yet — their features
 # exist as no-dep placeholders in homn-gate / homnd until vendored.
-agidb          = { git = "https://github.com/rohansx/agidb", rev = "f7dd510e31060fb042ad385e79317d031638452d" }
+agidb          = { git = "https://github.com/rohansx/agidb", rev = "0141615fd19f437f77bbf2f7381f03548967f73e" }
 
 [profile.release]
 opt-level     = 3

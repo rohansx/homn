@@ -11,7 +11,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agidb"
 version = "0.1.0-dev"
-source = "git+https://github.com/rohansx/agidb?rev=f7dd510e31060fb042ad385e79317d031638452d#f7dd510e31060fb042ad385e79317d031638452d"
+source = "git+https://github.com/rohansx/agidb?rev=0141615fd19f437f77bbf2f7381f03548967f73e#0141615fd19f437f77bbf2f7381f03548967f73e"
 dependencies = [
  "agidb-core",
  "agidb-extract",
@@ -25,7 +25,7 @@ dependencies = [
 [[package]]
 name = "agidb-core"
 version = "0.1.0-dev"
-source = "git+https://github.com/rohansx/agidb?rev=f7dd510e31060fb042ad385e79317d031638452d#f7dd510e31060fb042ad385e79317d031638452d"
+source = "git+https://github.com/rohansx/agidb?rev=0141615fd19f437f77bbf2f7381f03548967f73e#0141615fd19f437f77bbf2f7381f03548967f73e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -46,7 +46,7 @@ dependencies = [
 [[package]]
 name = "agidb-extract"
 version = "0.1.0-dev"
-source = "git+https://github.com/rohansx/agidb?rev=f7dd510e31060fb042ad385e79317d031638452d#f7dd510e31060fb042ad385e79317d031638452d"
+source = "git+https://github.com/rohansx/agidb?rev=0141615fd19f437f77bbf2f7381f03548967f73e#0141615fd19f437f77bbf2f7381f03548967f73e"
 dependencies = [
  "agidb-core",
  "anyhow",
@@ -1343,6 +1343,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "homn-types",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
