@@ -200,6 +200,8 @@ pub enum ServiceOutcome {
 pub struct SetupReport {
     /// Outcome of policy seeding.
     pub policy: PolicySeedOutcome,
+    /// Outcome of v2 ingest-policy (`ingest.rhai`) seeding.
+    pub ingest_policy: PolicySeedOutcome,
     /// Outcome of the Claude Code hook install.
     pub hook: InstallReport,
     /// Outcome of service installation.
@@ -209,6 +211,7 @@ pub struct SetupReport {
 /// Run `homn setup`: seed the policy, install the hook, install the service. Idempotent.
 pub fn run_setup(opts: SetupOptions) -> anyhow::Result<SetupReport> {
     let policy = seed_policy(&opts.policies_dir, opts.profile)?;
+    let ingest_policy = seed_ingest_policy(&opts.policies_dir)?;
 
     let mut sink = std::io::sink();
     let hook = run_install(&opts.settings_path, true, &mut sink)?;
@@ -226,9 +229,25 @@ pub fn run_setup(opts: SetupOptions) -> anyhow::Result<SetupReport> {
 
     Ok(SetupReport {
         policy,
+        ingest_policy,
         hook,
         service,
     })
+}
+
+/// Seed the v2 capture-ingest policy (`ingest.rhai`) into `policies_dir` if none exists.
+/// The shipped policy has the conservative defaults (FR-026): deny incognito + vault windows,
+/// redact third-party PII in comms/audio, allow otherwise, never AllowCloud. An existing
+/// `ingest.rhai` is left untouched (the user may have customized it / added excludes).
+pub fn seed_ingest_policy(policies_dir: &Path) -> std::io::Result<PolicySeedOutcome> {
+    const INGEST_RHAI: &str = include_str!("../../../policies/ingest.rhai");
+    let target = policies_dir.join("ingest.rhai");
+    if target.exists() {
+        return Ok(PolicySeedOutcome::KeptExisting(target));
+    }
+    std::fs::create_dir_all(policies_dir)?;
+    std::fs::write(&target, INGEST_RHAI)?;
+    Ok(PolicySeedOutcome::Written(target))
 }
 
 /// What [`run_uninstall`] did, for the CLI to report.
@@ -341,6 +360,39 @@ mod tests {
             std::fs::read_to_string(&target).unwrap(),
             "allow if tool == \"Read\";\n",
             "an existing valid policy is left byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn seed_ingest_policy_writes_the_shipped_conservative_default_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let policies = dir.path().join("policies");
+        let outcome = seed_ingest_policy(&policies).unwrap();
+        let target = policies.join("ingest.rhai");
+        assert_eq!(outcome, PolicySeedOutcome::Written(target.clone()));
+        let text = std::fs::read_to_string(&target).unwrap();
+        // The shipped conservative policy: deny incognito + vaults, redact comms PII.
+        assert!(!text.is_empty(), "ingest.rhai was seeded");
+        assert!(
+            text.contains("incognito"),
+            "seeds the conservative defaults"
+        );
+        assert!(text.contains("deny_with"), "has hard denies (vaults)");
+    }
+
+    #[test]
+    fn seed_ingest_policy_keeps_an_existing_one_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let policies = dir.path().join("policies");
+        std::fs::create_dir_all(&policies).unwrap();
+        let target = policies.join("ingest.rhai");
+        std::fs::write(&target, "allow();\n").unwrap();
+        let outcome = seed_ingest_policy(&policies).unwrap();
+        assert_eq!(outcome, PolicySeedOutcome::KeptExisting(target.clone()));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "allow();\n",
+            "an existing ingest policy is left untouched (user may have customized / added excludes)"
         );
     }
 

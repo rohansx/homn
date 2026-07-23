@@ -177,6 +177,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Remove ALL captured memory + derived data — the agidb brain, the audit ledger, and
+    /// watermarks (Invariant 5: one command to destroy). Requires confirm unless `--yes`.
+    Destroy {
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Path to the agidb brain directory to remove.
+        #[arg(long)]
+        brain: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -571,6 +581,9 @@ async fn main() -> anyhow::Result<()> {
             json,
         }) => {
             forget_command(entity, pattern, since, until, brain, json).await?;
+        }
+        Some(Command::Destroy { yes, brain }) => {
+            destroy_command(yes, brain).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -1014,6 +1027,20 @@ fn print_setup_report(report: &homn_hook::setup::SetupReport) {
             "  policy:   WARNING {} does not parse — left untouched; fix it with `homn rule edit`",
             p.display()
         ),
+    }
+    match &report.ingest_policy {
+        PolicySeedOutcome::Written(p) => {
+            eprintln!("  ingest:   seeded {} (conservative defaults: vault/incognito denied, PII redacted, cloud OFF)", p.display())
+        }
+        PolicySeedOutcome::KeptExisting(p) => {
+            eprintln!("  ingest:   kept your existing {}", p.display())
+        }
+        PolicySeedOutcome::KeptUnparseable(p) => {
+            eprintln!(
+                "  ingest:   WARNING {} does not parse — left untouched",
+                p.display()
+            )
+        }
     }
     eprintln!("  hook:     installed into Claude Code settings.json");
     match &report.service {
@@ -1463,6 +1490,55 @@ fn parse_iso(s: &str) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .map_err(|e| anyhow::anyhow!("invalid datetime `{s}`: {e}"))
+}
+
+// ===== `homn destroy` (v2: US7 / T059) =================================================
+
+async fn destroy_command(yes: bool, brain: PathBuf) -> anyhow::Result<()> {
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+    let audit_db = config.audit.db_path.clone();
+
+    // Invariant 5: require an explicit confirm unless --yes. Never silently destroy.
+    if !yes {
+        eprintln!("homn destroy will PERMANENTLY remove:");
+        eprintln!("  • the agidb brain:       {}", brain.display());
+        eprintln!("  • the audit ledger + watermarks: {}", audit_db.display());
+        eprint!("\ntype 'yes' to confirm: ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim() != "yes" {
+            eprintln!("aborted (nothing was removed)");
+            return Ok(());
+        }
+    }
+
+    let mut removed: Vec<String> = Vec::new();
+    if brain.exists() {
+        std::fs::remove_dir_all(&brain)
+            .map_err(|e| anyhow::anyhow!("remove brain {}: {e}", brain.display()))?;
+        removed.push(format!("brain {}", brain.display()));
+    }
+    if audit_db.exists() {
+        std::fs::remove_file(&audit_db)
+            .map_err(|e| anyhow::anyhow!("remove audit db {}: {e}", audit_db.display()))?;
+        removed.push(format!("audit ledger + watermarks {}", audit_db.display()));
+    }
+    // -wal/-shm sidecars (sqlite WAL mode) so they don't resurrect the db.
+    for sidecar in ["-wal", "-shm"] {
+        let p = format!("{}{sidecar}", audit_db.display());
+        if PathBuf::from(&p).exists() {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+
+    if removed.is_empty() {
+        eprintln!("nothing to destroy (brain and audit db not found)");
+    } else {
+        eprintln!("destroyed: {}", removed.join("; "));
+        eprintln!("every captured memory and derived datum is gone (Invariant 5).");
+    }
+    Ok(())
 }
 
 // ===== `homn eval` (v2: US1) ===========================================================
