@@ -155,6 +155,28 @@ enum Command {
         #[command(subcommand)]
         action: CaptureAction,
     },
+    /// Unlearn memories matching a scope, with a tamper-evident receipt (v2: US4 / T047).
+    /// `homn forget "Sarah"` (entity), `homn forget --pattern "pricing quote"`, or
+    /// `homn forget --since 2026-07-01 --until 2026-07-31`. Needs `--features brain-agidb`.
+    Forget {
+        /// The entity name to forget (when not using --pattern / --since+--until).
+        entity: Option<String>,
+        /// Forget memories whose recall surfaces this pattern.
+        #[arg(long)]
+        pattern: Option<String>,
+        /// Time-range start (ISO-8601). Use with --until.
+        #[arg(long)]
+        since: Option<String>,
+        /// Time-range end (ISO-8601). Use with --since.
+        #[arg(long)]
+        until: Option<String>,
+        /// Path to the agidb brain. Needs `--features brain-agidb`.
+        #[arg(long)]
+        brain: PathBuf,
+        /// Emit JSON (`{ receipt_id, scope, match_count, at }`) instead of human text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -539,6 +561,16 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Capture { action }) => {
             capture_command(action).await?;
+        }
+        Some(Command::Forget {
+            entity,
+            pattern,
+            since,
+            until,
+            brain,
+            json,
+        }) => {
+            forget_command(entity, pattern, since, until, brain, json).await?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -1330,6 +1362,107 @@ fn spawn_daemon_backgrounded() -> anyhow::Result<()> {
     // Give the socket a moment to bind before `Start` returns.
     std::thread::sleep(std::time::Duration::from_millis(300));
     Ok(())
+}
+
+// ===== `homn forget` (v2: US4 / T047) =================================================
+
+async fn forget_command(
+    entity: Option<String>,
+    pattern: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    brain: PathBuf,
+    json: bool,
+) -> anyhow::Result<()> {
+    use homn_types::ForgetScope;
+    // DeletionReceipt/Receipt/AgidbStore/Store are imported inside the `brain-agidb` cfg block
+    // below — AgidbStore only exists with the feature.
+
+    // Build the scope from exactly one of: entity | --pattern | --since+--until.
+    let scope = if let Some(name) = entity {
+        ForgetScope::Entity(name)
+    } else if let Some(p) = pattern {
+        ForgetScope::Pattern(p)
+    } else if let (Some(s), Some(u)) = (since.as_ref(), until.as_ref()) {
+        let from = parse_iso(s)?;
+        let to = parse_iso(u)?;
+        if from > to {
+            anyhow::bail!("`--since` ({from}) must not be after `--until` ({to})");
+        }
+        ForgetScope::TimeRange { from, to }
+    } else {
+        anyhow::bail!(
+            "specify a scope: `homn forget <entity>`, `--pattern <p>`, or `--since <iso> --until <iso>`"
+        );
+    };
+
+    #[cfg(not(feature = "brain-agidb"))]
+    {
+        let _ = (scope, brain, json);
+        anyhow::bail!(
+            "`homn forget` needs the agidb brain. Rebuild with:\n  \
+             cargo build -p homn-bin --features brain-agidb"
+        );
+    }
+    #[cfg(feature = "brain-agidb")]
+    {
+        use homn_types::{DeletionReceipt, Receipt};
+        use homnd::store::{AgidbStore, Store};
+
+        let agidb_brain = agidb::Agidb::open_with(
+            agidb::AgidbConfig::new(&brain).with_extractor(agidb::ExtractorSetup::Null),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("open brain {}: {e}", brain.display()))?;
+        let store = AgidbStore::new(std::sync::Arc::new(agidb_brain));
+
+        // Forget in the store, then append a DeletionReceipt to the audit ledger (Invariant 3).
+        let receipt: DeletionReceipt = store.forget(&scope).await?;
+        let config_path = homn_daemon::config::default_config_path();
+        let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+        let audit = homn_audit::Db::open(&config.audit.db_path).await?;
+        let entry = audit
+            .append_receipt(&Receipt::Deletion(receipt.clone()))
+            .await?;
+
+        if json {
+            let out = serde_json::json!({
+                "receipt_id": entry.seq,
+                "scope": receipt.scope,
+                "match_count": receipt.match_count,
+                "at": receipt.at.to_rfc3339(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!("forgot: {} match(es) removed", receipt.match_count);
+            println!("scope : {}", format_scope(&receipt.scope));
+            println!(
+                "receipt: seq={} (verify with `homn ledger verify`)",
+                entry.seq
+            );
+        }
+        // Release the brain's file lock.
+        drop(store);
+        Ok(())
+    }
+}
+
+/// Format a [`ForgetScope`] for human display.
+#[cfg(feature = "brain-agidb")]
+fn format_scope(scope: &homn_types::ForgetScope) -> String {
+    use homn_types::ForgetScope;
+    match scope {
+        ForgetScope::Entity(n) => format!("entity \"{n}\""),
+        ForgetScope::Pattern(p) => format!("pattern \"{p}\""),
+        ForgetScope::TimeRange { from, to } => format!("time-range {from} → {to}"),
+    }
+}
+
+/// Parse an ISO-8601 datetime for `--since`/`--until`.
+fn parse_iso(s: &str) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|e| anyhow::anyhow!("invalid datetime `{s}`: {e}"))
 }
 
 // ===== `homn eval` (v2: US1) ===========================================================
