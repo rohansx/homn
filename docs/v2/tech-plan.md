@@ -109,10 +109,10 @@ The OpenHuman-inspired layer, and the highest-signal-per-byte source in the desi
 
 ## Phase 5 — body
 
-- Un-park `homn-face` (the Tauri 2 spike scaffold already builds); fork clicky's MIT skeleton for cursor presence + pointing; local TTS for voice-out; "hey homn" wake on the existing dictation stack.
-- **Proactive interruption policy is `homn-policy`'s territory** — this is where old homn and new homn become one product: the same Rhai engine that gated Claude Code's `rm -rf` now governs what the clone may say, do, and interrupt, with the same audit trail.
+- **Adopt Clicky (ClickyX) as the body** — see [`l5-body-clicky-adoption.md`](./l5-body-clicky-adoption.md) (ADR-0008). Fork the MIT Rust+Tauri cross-platform port (cursor presence + `enigo` pointing/computer-use + TTS + automation); wire it to homn's brain (memory-in via MCP) and gate (hands→policy, the differentiator); use its TTS for voice-out, keep convox-voice for voice-in; retire the `homn-face` spike (ClickyX supersedes it on the same stack).
+- **Proactive interruption policy is `homn-policy`'s territory** — this is where old homn and new homn become one product: the same Rhai engine that gated Claude Code's `rm -rf` now governs what the clone may say, do, and interrupt, with the same audit trail — and now also gates every computer-use action the body takes.
 
-*Est: 3+ weeks, deliberately after v1 traction data.*
+*Est: 3+ weeks, deliberately after v1 traction data (gated on US5/US6 ship + the real recall@3).*
 
 ---
 
