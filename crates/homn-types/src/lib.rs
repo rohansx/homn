@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod belief;
 pub mod bus;
 pub mod commitment;
 pub mod decision;
@@ -28,6 +29,7 @@ pub use rpc::{ErrorObject, Request, Response, RpcError};
 pub use session::{Session, SessionId, SessionKind};
 
 // v2 ambient-memory re-exports.
+pub use belief::{Belief, BeliefId};
 pub use commitment::{Commitment, CommitmentId, CommitmentStatus, ExtractionSource, Party};
 pub use observation::{Observation, Provenance, SpeakerTag};
 pub use receipt::{

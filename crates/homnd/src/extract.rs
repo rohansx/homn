@@ -300,3 +300,152 @@ mod tests {
         assert!(c.is_overdue(Utc::now()));
     }
 }
+
+// ============================================================================
+// Belief extraction (US5/US6) — "I think X", "I believe X", "I'm not sure about X"
+// ============================================================================
+
+use homn_types::{Belief, BeliefId};
+
+/// The belief-extraction backend. Parallel to [`CommitmentExtractor`].
+pub trait BeliefExtractor: Send + Sync {
+    /// Extract beliefs from `text` (post-redaction), attributed to `source_obs`.
+    fn extract_beliefs(
+        &self,
+        text: &str,
+        source_obs: &str,
+        captured_at: DateTime<Utc>,
+    ) -> Vec<Belief>;
+}
+
+/// The v1 deterministic belief extractor — no network, no disclosure.
+#[derive(Debug)]
+pub struct RegexBeliefExtractor {
+    i_think: Regex,
+    i_believe: Regex,
+    not_sure: Regex,
+    revision: Regex,
+}
+
+impl RegexBeliefExtractor {
+    /// Construct with the v1 patterns.
+    pub fn new() -> Self {
+        Self {
+            // "I think agidb recall is shaky" / "I think the brain should be agidb"
+            i_think: Regex::new(r"(?i)\bI\s+think\b\s+(.+?)[.\n]").unwrap(),
+            // "I believe X" / "I'm convinced X"
+            i_believe: Regex::new(r"(?i)\b(?:I\s+believe|I'm\s+convinced)\b\s+(.+?)[.\n]").unwrap(),
+            // "I'm not sure about X" / "I'm not sure X" → lower confidence
+            not_sure: Regex::new(r"(?i)\bI'?m\s+not\s+sure\s+(?:about\s+)?(.+?)[.\n]").unwrap(),
+            // "actually X" / "on second thought X" → revision marker (high confidence, supersedes)
+            revision: Regex::new(r"(?i)\b(?:actually|on\s+second\s+thought)\b[,:]\s*(.+?)[.\n]")
+                .unwrap(),
+        }
+    }
+}
+
+impl Default for RegexBeliefExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Derive a short topic from a position: the first ~4 significant words.
+fn topic_of(position: &str) -> String {
+    let words: Vec<&str> = position.split_whitespace().take(6).collect();
+    words.join(" ")
+}
+
+impl BeliefExtractor for RegexBeliefExtractor {
+    fn extract_beliefs(
+        &self,
+        text: &str,
+        source_obs: &str,
+        captured_at: DateTime<Utc>,
+    ) -> Vec<Belief> {
+        let mut out = Vec::new();
+        let mk = |position: String, confidence: f32| Belief {
+            id: BeliefId::new(),
+            topic: topic_of(&position),
+            position: position.trim().to_owned(),
+            confidence,
+            valid_from: captured_at,
+            superseded_at: None,
+            source_obs: source_obs.to_owned(),
+            extracted_by: ExtractionSource::Regex,
+            disclosure_receipt: None,
+            created_at: Utc::now(),
+        };
+        for c in self.i_think.captures_iter(text) {
+            out.push(mk(c[1].to_owned(), 1.0));
+        }
+        for c in self.i_believe.captures_iter(text) {
+            out.push(mk(c[1].to_owned(), 1.0));
+        }
+        for c in self.not_sure.captures_iter(text) {
+            out.push(mk(format!("not sure: {}", &c[1]), 0.5));
+        }
+        for c in self.revision.captures_iter(text) {
+            out.push(mk(c[1].to_owned(), 1.0));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod belief_tests {
+    use super::*;
+
+    fn anchor() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-07-15T13:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn extracts_i_think_and_i_believe() {
+        let bs = RegexBeliefExtractor::default().extract_beliefs(
+            "I think agidb recall is shaky. I believe we should merge ctxgraph.",
+            "obs-1",
+            anchor(),
+        );
+        assert_eq!(bs.len(), 2);
+        assert!(bs[0].position.contains("agidb recall is shaky"));
+        assert_eq!(bs[0].confidence, 1.0);
+        assert!(bs[1].position.contains("merge ctxgraph"));
+    }
+
+    #[test]
+    fn not_sure_is_lower_confidence() {
+        let bs = RegexBeliefExtractor::default().extract_beliefs(
+            "I'm not sure about the pricing model.",
+            "obs-2",
+            anchor(),
+        );
+        assert_eq!(bs.len(), 1);
+        assert!(bs[0].confidence < 1.0);
+        assert!(bs[0].position.starts_with("not sure"));
+    }
+
+    #[test]
+    fn revision_marker_extracts() {
+        let bs = RegexBeliefExtractor::default().extract_beliefs(
+            "Actually, agidb is good enough after the gate.",
+            "obs-3",
+            anchor(),
+        );
+        assert_eq!(bs.len(), 1);
+        assert!(bs[0].position.contains("agidb is good enough"));
+    }
+
+    #[test]
+    fn topic_is_first_few_words() {
+        let bs = RegexBeliefExtractor::default().extract_beliefs(
+            "I think the pricing quote is due Friday but Marco is flexible.",
+            "obs-4",
+            anchor(),
+        );
+        assert_eq!(bs.len(), 1);
+        assert_eq!(bs[0].topic.split_whitespace().count(), 6);
+    }
+}

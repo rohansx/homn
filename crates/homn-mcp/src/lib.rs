@@ -21,10 +21,12 @@
 
 #![warn(missing_docs)]
 
+mod beliefs;
 mod brain;
 mod commitments;
 mod rate_limit;
 
+pub use beliefs::{Beliefs, MemoryBeliefs};
 #[cfg(feature = "brain-agidb")]
 pub use brain::AgidbBrain;
 pub use brain::{Brain, MemoryBrain, RecallHit, RecordingBrain, TimelineEntry};
@@ -57,6 +59,9 @@ pub struct McpState {
     /// The commitment store for `commitments(status?, due_before?)` (v2 US5). `None` when no
     /// commitment source is wired; the tool then returns a clear "no commitments" error.
     pub commitments: Option<Arc<dyn Commitments>>,
+    /// The belief store for `beliefs(topic)` (v2 US5/US6). `None` when no belief source is
+    /// wired; the tool then returns a clear "no beliefs" error.
+    pub beliefs: Option<Arc<dyn Beliefs>>,
 }
 
 // ============================================================================
@@ -141,6 +146,16 @@ pub struct CommitmentsArgs {
     /// Only commitments due on/before this ISO-8601 datetime. Omit for any due date.
     #[serde(default)]
     pub due_before: Option<String>,
+}
+
+/// Args for `beliefs` (v2: US5/US6).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BeliefsArgs {
+    /// The topic to look up (substring match; empty = all topics).
+    pub topic: String,
+    /// If true, return only the current (non-superseded) position per topic, dropping history.
+    #[serde(default)]
+    pub current_only: bool,
 }
 
 fn parse_iso(s: &str) -> Result<chrono::DateTime<chrono::Utc>, McpError> {
@@ -373,6 +388,26 @@ impl HomnMcpServer {
             )),
         }
     }
+
+    #[tool(
+        description = "Look up beliefs (positions taken over time) for a topic. Returns the current position plus its revision history, each with position, confidence, valid_from, superseded_at, source_obs. Pure local query, no network. Args: topic (substring match), current_only (optional: drop the revision history)."
+    )]
+    async fn beliefs(
+        &self,
+        Parameters(args): Parameters<BeliefsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let store = self.state.beliefs.as_ref().ok_or_else(|| {
+            McpError::internal_error("no belief store wired into this MCP server", None)
+        })?;
+        match store.beliefs(&args.topic, args.current_only).await {
+            Ok(bs) => Ok(CallToolResult::success(vec![Content::json(bs)?])),
+            Err(err) => Err(McpError::internal_error(
+                format!("beliefs query failed: {err}"),
+                None,
+            )),
+        }
+    }
 }
 
 fn decision_str(d: homn_types::Decision) -> &'static str {
@@ -482,6 +517,7 @@ mod tests {
             audit,
             brain: None,
             commitments: None,
+            beliefs: None,
         }
     }
 
@@ -537,6 +573,7 @@ mod tests {
             audit,
             brain: Some(brain),
             commitments: None,
+            beliefs: None,
         }
     }
 
@@ -628,6 +665,7 @@ mod tests {
             audit,
             brain: None,
             commitments: Some(c),
+            beliefs: None,
         }
     }
 
@@ -712,6 +750,76 @@ mod tests {
             .expect_err("no commitments wired");
         assert!(
             err.message.to_lowercase().contains("no commitment"),
+            "{}",
+            err.message
+        );
+    }
+
+    async fn state_with_beliefs(b: Arc<dyn Beliefs>) -> McpState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+            brain: None,
+            commitments: None,
+            beliefs: Some(b),
+        }
+    }
+
+    #[tokio::test]
+    async fn beliefs_tool_returns_current_and_history() {
+        use homn_types::{BeliefId, ExtractionSource};
+        let store = Arc::new(MemoryBeliefs::new());
+        for (position, current) in [("use agidb", false), ("actually ctxgraph", true)] {
+            store.push(homn_types::Belief {
+                id: BeliefId::new(),
+                topic: "the brain".into(),
+                position: position.into(),
+                confidence: 1.0,
+                valid_from: chrono::Utc::now(),
+                superseded_at: if current {
+                    None
+                } else {
+                    Some(chrono::Utc::now())
+                },
+                source_obs: "obs".into(),
+                extracted_by: ExtractionSource::Regex,
+                disclosure_receipt: None,
+                created_at: chrono::Utc::now(),
+            });
+        }
+        let state = state_with_beliefs(store).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .beliefs(Parameters(BeliefsArgs {
+                topic: "brain".into(),
+                current_only: false,
+            }))
+            .await
+            .unwrap();
+        let bs: Vec<homn_types::Belief> =
+            serde_json::from_str(&res.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(bs.len(), 2, "current + history");
+        assert!(bs[0].superseded_at.is_none(), "current first");
+        assert!(bs[0].position.contains("ctxgraph"));
+    }
+
+    #[tokio::test]
+    async fn beliefs_without_a_store_returns_a_clear_error() {
+        let state = test_state("").await;
+        let server = HomnMcpServer::new(state);
+        let err = server
+            .beliefs(Parameters(BeliefsArgs {
+                topic: "x".into(),
+                current_only: false,
+            }))
+            .await
+            .expect_err("no beliefs wired");
+        assert!(
+            err.message.to_lowercase().contains("no belief"),
             "{}",
             err.message
         );

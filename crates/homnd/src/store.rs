@@ -156,20 +156,21 @@ async fn episode_ids_for_cue(
     Ok(recall.matches.into_iter().map(|m| m.episode_id).collect())
 }
 
-/// A [`Store`] decorator that runs write-time commitment extraction after each store-write
-/// (US5 / FR-020: extraction runs off the store-write path, never on read). After delegating
-/// `store` to the inner store, it extracts commitments from the (post-redaction) observation
-/// text and adds them to a [`CommitmentStore`]. No-op (just delegates) when no extractor/store
-/// is attached, so it's safe to wrap any store.
+/// A [`Store`] decorator that runs write-time extraction after each store-write (US5 / FR-020:
+/// extraction runs off the store-write path, never on read). After delegating `store` to the
+/// inner store, it extracts commitments AND beliefs from the (post-redaction) observation text
+/// and adds them to their stores. Any stage may be `None` (just delegates), so it's safe to
+/// wrap any store with any subset of extraction enabled.
 pub struct ExtractingStore {
     inner: Arc<dyn Store>,
     extractor: Option<Arc<dyn crate::extract::CommitmentExtractor>>,
     commitments: Option<Arc<dyn crate::commitments::CommitmentStore>>,
+    belief_extractor: Option<Arc<dyn crate::extract::BeliefExtractor>>,
+    beliefs: Option<Arc<dyn crate::beliefs::BeliefStore>>,
 }
 
 impl ExtractingStore {
-    /// Wrap `inner`; after each store, run `extractor` and add results to `commitments`.
-    /// Either may be `None` to disable extraction (the store still delegates).
+    /// Wrap `inner` for commitment extraction; add belief extraction with [`Self::with_beliefs`].
     pub fn new(
         inner: Arc<dyn Store>,
         extractor: Option<Arc<dyn crate::extract::CommitmentExtractor>>,
@@ -179,7 +180,20 @@ impl ExtractingStore {
             inner,
             extractor,
             commitments,
+            belief_extractor: None,
+            beliefs: None,
         }
+    }
+
+    /// Attach belief extraction (builder).
+    pub fn with_beliefs(
+        mut self,
+        extractor: Arc<dyn crate::extract::BeliefExtractor>,
+        store: Arc<dyn crate::beliefs::BeliefStore>,
+    ) -> Self {
+        self.belief_extractor = Some(extractor);
+        self.beliefs = Some(store);
+        self
     }
 }
 
@@ -191,6 +205,13 @@ impl Store for ExtractingStore {
             for c in ext.extract(&obs.text, &id, obs.captured_at) {
                 if let Err(e) = store.add(c) {
                     tracing::warn!(error = %e, "commitment add failed");
+                }
+            }
+        }
+        if let (Some(ext), Some(store)) = (&self.belief_extractor, &self.beliefs) {
+            for b in ext.extract_beliefs(&obs.text, &id, obs.captured_at) {
+                if let Err(e) = store.add(b) {
+                    tracing::warn!(error = %e, "belief add failed");
                 }
             }
         }

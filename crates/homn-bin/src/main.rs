@@ -105,6 +105,10 @@ enum Command {
         /// commitments".
         #[arg(long)]
         commitments_db: Option<PathBuf>,
+        /// Path to the beliefs sqlite DB to serve `beliefs()` against. Without it,
+        /// `beliefs()` returns "no beliefs".
+        #[arg(long)]
+        beliefs_db: Option<PathBuf>,
     },
     /// Invoked by Claude Code hooks via ~/.claude/settings.json. T029 implements.
     Hook {
@@ -476,6 +480,7 @@ async fn main() -> anyhow::Result<()> {
             transport,
             brain,
             commitments_db,
+            beliefs_db,
         }) => {
             // T078: start the MCP server. stdio is what Claude Code's MCP config invokes;
             // HTTP transport (T071) lands in a follow-up.
@@ -509,12 +514,25 @@ async fn main() -> anyhow::Result<()> {
                 )
             });
             let commitments = open_commitments(commitments_db.as_deref())?;
+            // Default the beliefs DB to the path next to the audit DB.
+            let beliefs_db = beliefs_db.or_else(|| {
+                Some(
+                    config
+                        .audit
+                        .db_path
+                        .parent()
+                        .unwrap_or(&config.audit.db_path)
+                        .join("beliefs.db"),
+                )
+            });
+            let beliefs = open_beliefs(beliefs_db.as_deref())?;
             let state = homn_mcp::McpState {
                 engine,
                 rules: rules_handle,
                 audit,
                 brain,
                 commitments,
+                beliefs,
             };
             match transport {
                 Some(McpTransport::Stdio) | None => {
@@ -1334,6 +1352,32 @@ fn open_commitments(
     Ok(Some(std::sync::Arc::new(CommitmentStoreCommitments(store))))
 }
 
+/// Open the beliefs sqlite read-side and wrap it as a [`homn_mcp::Beliefs`] handle, so the MCP
+/// `beliefs()` tool can query what the daemon extracted (cross-process via the shared sqlite
+/// file). `None` when no path is given → no beliefs (the tool returns a clear error).
+fn open_beliefs(
+    path: Option<&Path>,
+) -> anyhow::Result<Option<std::sync::Arc<dyn homn_mcp::Beliefs>>> {
+    let Some(path) = path else { return Ok(None) };
+    let store = std::sync::Arc::new(homnd::SqliteBeliefStore::open(path)?);
+    Ok(Some(std::sync::Arc::new(BeliefStoreBeliefs(store))))
+}
+
+/// Bridge: a [`homn_mcp::Beliefs`] impl over a [`homnd::SqliteBeliefStore`].
+struct BeliefStoreBeliefs(std::sync::Arc<homnd::SqliteBeliefStore>);
+
+#[async_trait::async_trait]
+impl homn_mcp::Beliefs for BeliefStoreBeliefs {
+    async fn beliefs(
+        &self,
+        topic: &str,
+        current_only: bool,
+    ) -> anyhow::Result<Vec<homn_types::Belief>> {
+        use homnd::BeliefStore;
+        self.0.query(topic, current_only)
+    }
+}
+
 /// Bridge: a [`homn_mcp::Commitments`] impl over a [`homnd::SqliteCommitmentStore`] — the MCP
 /// `commitments()` tool reads the shared sqlite file the daemon writes.
 struct CommitmentStoreCommitments(std::sync::Arc<homnd::SqliteCommitmentStore>);
@@ -1380,6 +1424,12 @@ async fn capture_command(action: CaptureAction) -> anyhow::Result<()> {
                     .parent()
                     .unwrap_or(&config.audit.db_path)
                     .join("commitments.db"),
+                beliefs_db_path: config
+                    .audit
+                    .db_path
+                    .parent()
+                    .unwrap_or(&config.audit.db_path)
+                    .join("beliefs.db"),
                 socket_path: homnd::default_control_socket_path(),
             };
             homnd::run_capture_daemon(cfg).await?;

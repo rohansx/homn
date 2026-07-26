@@ -39,6 +39,9 @@ pub struct CaptureDaemonConfig {
     /// Path to the commitments sqlite DB (write-time extraction lands here; the MCP server reads
     /// it cross-process). Defaults alongside the audit DB.
     pub commitments_db_path: PathBuf,
+    /// Path to the beliefs sqlite DB (write-time extraction lands here). Defaults alongside the
+    /// audit DB.
+    pub beliefs_db_path: PathBuf,
     /// Path for the control socket (`$XDG_RUNTIME_DIR/homnd.sock`).
     pub socket_path: PathBuf,
 }
@@ -66,11 +69,20 @@ pub async fn run_capture_daemon(cfg: CaptureDaemonConfig) -> anyhow::Result<()> 
     let commitment_store = Arc::new(crate::commitments::SqliteCommitmentStore::open(
         &cfg.commitments_db_path,
     )?);
-    let store: Arc<dyn Store> = Arc::new(crate::store::ExtractingStore::new(
-        inner_store,
-        Some(Arc::new(crate::extract::RegexExtractor::new())),
-        Some(commitment_store.clone()),
-    ));
+    let belief_store = Arc::new(crate::beliefs::SqliteBeliefStore::open(
+        &cfg.beliefs_db_path,
+    )?);
+    let store: Arc<dyn Store> = Arc::new(
+        crate::store::ExtractingStore::new(
+            inner_store,
+            Some(Arc::new(crate::extract::RegexExtractor::new())),
+            Some(commitment_store.clone()),
+        )
+        .with_beliefs(
+            Arc::new(crate::extract::RegexBeliefExtractor::new()),
+            belief_store.clone(),
+        ),
+    );
 
     // 3. Audit DB (watermarks + receipts).
     if let Some(parent) = cfg.audit_db_path.parent() {

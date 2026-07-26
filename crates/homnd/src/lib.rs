@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod beliefs;
 pub mod commitments;
 pub mod control;
 pub mod daemon;
@@ -25,6 +26,7 @@ pub mod pipeline;
 pub mod session;
 pub mod store;
 
+pub use beliefs::{BeliefStore, MemoryBeliefStore, SqliteBeliefStore};
 pub use commitments::{CommitmentStore, MemoryCommitmentStore, SqliteCommitmentStore};
 pub use control::{
     default_socket_path as default_control_socket_path, ControlClient, ControlOp, ControlRequest,
@@ -32,7 +34,9 @@ pub use control::{
 };
 pub use daemon::{run_capture_daemon, CaptureDaemonConfig};
 pub use dedupe::Dedupe;
-pub use extract::{extract_commitments, CommitmentExtractor, RegexExtractor};
+pub use extract::{
+    extract_commitments, BeliefExtractor, CommitmentExtractor, RegexBeliefExtractor, RegexExtractor,
+};
 pub use pipeline::{drain, Pipeline, PipelineStats, Processed, TickResult};
 pub use session::Sessionizer;
 pub use store::{MemoryStore, Store};
