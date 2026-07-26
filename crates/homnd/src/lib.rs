@@ -22,6 +22,8 @@ pub mod control;
 pub mod daemon;
 pub mod dedupe;
 pub mod extract;
+#[cfg(feature = "extract-llm")]
+pub mod llm;
 pub mod pipeline;
 pub mod session;
 pub mod store;

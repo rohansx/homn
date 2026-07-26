@@ -58,6 +58,7 @@ rusqlite       = { version = "0.32", features = ["bundled"] }
 tokio-rusqlite = "0.6"
 async-trait    = "0.1"
 ulid           = "1"
+ureq           = { version = "3", features = ["json"] }
 rhai           = { version = "1", features = ["serde", "sync"] }
 regex          = "1"
 humantime      = "2"

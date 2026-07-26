@@ -196,6 +196,23 @@ enum Command {
         #[arg(long)]
         brain: PathBuf,
     },
+    /// Manage the cloud API key for write-time extraction (US5 / T051). Stored in a 0600 file
+    /// at the config dir. Cloud extraction is OFF until a key is set AND an `AllowCloud` policy
+    /// rule fires.
+    Key {
+        #[command(subcommand)]
+        action: KeyAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum KeyAction {
+    /// Store the cloud API key (enables cloud extraction when an AllowCloud rule fires).
+    Set { key: String },
+    /// Print whether a key is set (never prints the key itself).
+    Status,
+    /// Remove the stored key (disables cloud extraction).
+    Unset,
 }
 
 #[derive(Subcommand, Debug)]
@@ -624,6 +641,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Destroy { yes, brain }) => {
             destroy_command(yes, brain).await?;
+        }
+        Some(Command::Key { action }) => {
+            key_command(action)?;
         }
         None => {
             // No subcommand → print short banner and help hint.
@@ -1645,6 +1665,59 @@ async fn destroy_command(yes: bool, brain: PathBuf) -> anyhow::Result<()> {
         eprintln!("every captured memory and derived datum is gone (Invariant 5).");
     }
     Ok(())
+}
+
+// ===== `homn key` (v2: US5 / T051) =====================================================
+
+fn cloud_key_path(config: &homn_daemon::config::Config) -> PathBuf {
+    config
+        .policy
+        .policies_dir
+        .parent()
+        .unwrap_or(&config.policy.policies_dir)
+        .join("cloud.key")
+}
+
+fn key_command(action: KeyAction) -> anyhow::Result<()> {
+    let config_path = homn_daemon::config::default_config_path();
+    let config = homn_daemon::load_config(&config_path).unwrap_or_default();
+    let path = cloud_key_path(&config);
+    match action {
+        KeyAction::Set { key } => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            // Write with 0600 — owner-only read. Cloud extraction is OFF until this is set.
+            std::fs::write(&path, key.trim())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            eprintln!("cloud key stored (0600) at {}", path.display());
+            eprintln!(
+                "cloud extraction is now ARMED — it runs when an AllowCloud policy rule fires."
+            );
+            Ok(())
+        }
+        KeyAction::Status => {
+            if path.exists() {
+                eprintln!("cloud key is SET at {}", path.display());
+            } else {
+                eprintln!("cloud key is NOT set (cloud extraction disabled)");
+            }
+            Ok(())
+        }
+        KeyAction::Unset => {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                eprintln!("cloud key removed — cloud extraction disabled");
+            } else {
+                eprintln!("cloud key was not set");
+            }
+            Ok(())
+        }
+    }
 }
 
 // ===== `homn eval` (v2: US1) ===========================================================

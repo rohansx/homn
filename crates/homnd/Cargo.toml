@@ -26,11 +26,17 @@ async-trait  = { workspace = true }
 regex        = { workspace = true }
 rusqlite     = { workspace = true }
 agidb        = { workspace = true, optional = true }
+ureq         = { workspace = true, optional = true }
 
 [features]
 brain-agidb   = ["dep:agidb"]
 # TODO(source): ctxgraph dep lands only if the Phase 0 gate (T021) demands it.
 brain-ctxgraph = []
+# HTTP LLM extraction backend (local Ollama or any OpenAI-compatible cloud endpoint). Off by
+# default — the regex extractor is the no-network floor; this is the upgrade. Gated so the
+# workspace still builds without an HTTP client, and the read-path no-egress story stays clean
+# (the HTTP client only compiles when this feature is on).
+extract-llm   = ["dep:ureq"]
 
 [dev-dependencies]
 tempfile = "3"
