@@ -9,6 +9,7 @@
 
 use async_trait::async_trait;
 use homn_types::Observation;
+use std::sync::Arc;
 
 /// The durable memory a gated observation lands in.
 #[async_trait]
@@ -153,4 +154,53 @@ async fn episode_ids_for_cue(
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(recall.matches.into_iter().map(|m| m.episode_id).collect())
+}
+
+/// A [`Store`] decorator that runs write-time commitment extraction after each store-write
+/// (US5 / FR-020: extraction runs off the store-write path, never on read). After delegating
+/// `store` to the inner store, it extracts commitments from the (post-redaction) observation
+/// text and adds them to a [`CommitmentStore`]. No-op (just delegates) when no extractor/store
+/// is attached, so it's safe to wrap any store.
+pub struct ExtractingStore {
+    inner: Arc<dyn Store>,
+    extractor: Option<Arc<dyn crate::extract::CommitmentExtractor>>,
+    commitments: Option<Arc<dyn crate::commitments::CommitmentStore>>,
+}
+
+impl ExtractingStore {
+    /// Wrap `inner`; after each store, run `extractor` and add results to `commitments`.
+    /// Either may be `None` to disable extraction (the store still delegates).
+    pub fn new(
+        inner: Arc<dyn Store>,
+        extractor: Option<Arc<dyn crate::extract::CommitmentExtractor>>,
+        commitments: Option<Arc<dyn crate::commitments::CommitmentStore>>,
+    ) -> Self {
+        Self {
+            inner,
+            extractor,
+            commitments,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Store for ExtractingStore {
+    async fn store(&self, obs: &Observation) -> anyhow::Result<String> {
+        let id = self.inner.store(obs).await?;
+        if let (Some(ext), Some(store)) = (&self.extractor, &self.commitments) {
+            for c in ext.extract(&obs.text, &id, obs.captured_at) {
+                if let Err(e) = store.add(c) {
+                    tracing::warn!(error = %e, "commitment add failed");
+                }
+            }
+        }
+        Ok(id)
+    }
+
+    async fn forget(
+        &self,
+        scope: &homn_types::ForgetScope,
+    ) -> anyhow::Result<homn_types::DeletionReceipt> {
+        self.inner.forget(scope).await
+    }
 }

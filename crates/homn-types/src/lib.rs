@@ -8,6 +8,7 @@
 #![warn(missing_docs)]
 
 pub mod bus;
+pub mod commitment;
 pub mod decision;
 pub mod rpc;
 pub mod session;
@@ -27,6 +28,7 @@ pub use rpc::{ErrorObject, Request, Response, RpcError};
 pub use session::{Session, SessionId, SessionKind};
 
 // v2 ambient-memory re-exports.
+pub use commitment::{Commitment, CommitmentId, CommitmentStatus, ExtractionSource, Party};
 pub use observation::{Observation, Provenance, SpeakerTag};
 pub use receipt::{
     DecisionReceipt, DeletionReceipt, DisclosureReceipt, ForgetScope, IngestOutcome, Receipt,

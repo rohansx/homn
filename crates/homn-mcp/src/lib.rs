@@ -22,11 +22,13 @@
 #![warn(missing_docs)]
 
 mod brain;
+mod commitments;
 mod rate_limit;
 
 #[cfg(feature = "brain-agidb")]
 pub use brain::AgidbBrain;
 pub use brain::{Brain, MemoryBrain, RecallHit, RecordingBrain, TimelineEntry};
+pub use commitments::{Commitments, MemoryCommitments};
 pub use rate_limit::{RateLimited, RateLimiter, DEFAULT_MAX_PER_WINDOW, DEFAULT_WINDOW};
 
 use std::sync::Arc;
@@ -52,6 +54,9 @@ pub struct McpState {
     /// The read-path memory for `recall` / `timeline` (v2). `None` when no brain is wired
     /// (e.g. the v1 policy-only server); the tools then return a clear "no brain" error.
     pub brain: Option<Arc<dyn Brain>>,
+    /// The commitment store for `commitments(status?, due_before?)` (v2 US5). `None` when no
+    /// commitment source is wired; the tool then returns a clear "no commitments" error.
+    pub commitments: Option<Arc<dyn Commitments>>,
 }
 
 // ============================================================================
@@ -125,6 +130,17 @@ pub struct TimelineArgs {
     pub from: String,
     /// Inclusive end of the window (ISO-8601 datetime).
     pub to: String,
+}
+
+/// Args for `commitments` (v2: US5). Both filters optional.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CommitmentsArgs {
+    /// Filter by status: `"open"`, `"fulfilled"`, `"overdue"`, `"cancelled"`. Omit for any.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Only commitments due on/before this ISO-8601 datetime. Omit for any due date.
+    #[serde(default)]
+    pub due_before: Option<String>,
 }
 
 fn parse_iso(s: &str) -> Result<chrono::DateTime<chrono::Utc>, McpError> {
@@ -320,6 +336,43 @@ impl HomnMcpServer {
             )),
         }
     }
+
+    #[tool(
+        description = "List extracted commitments (promises, mine and theirs). Returns each with text, owner, counterpart, due, status, source_obs, extracted_by — pure local query, no network. Args: status (optional: open|fulfilled|overdue|cancelled), due_before (optional ISO-8601 datetime)."
+    )]
+    async fn commitments(
+        &self,
+        Parameters(args): Parameters<CommitmentsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let store = self.state.commitments.as_ref().ok_or_else(|| {
+            McpError::internal_error("no commitment store wired into this MCP server", None)
+        })?;
+        let status = match args.status.as_deref() {
+            Some("open") => Some(homn_types::CommitmentStatus::Open),
+            Some("fulfilled") => Some(homn_types::CommitmentStatus::Fulfilled),
+            Some("overdue") => Some(homn_types::CommitmentStatus::Overdue),
+            Some("cancelled") => Some(homn_types::CommitmentStatus::Cancelled),
+            Some(other) => {
+                return Err(McpError::invalid_params(
+                    format!("invalid status `{other}` — must be open|fulfilled|overdue|cancelled"),
+                    None,
+                ));
+            }
+            None => None,
+        };
+        let due_before = match args.due_before.as_deref() {
+            Some(s) => Some(parse_iso(s)?),
+            None => None,
+        };
+        match store.commitments(status, due_before).await {
+            Ok(cs) => Ok(CallToolResult::success(vec![Content::json(cs)?])),
+            Err(err) => Err(McpError::internal_error(
+                format!("commitments query failed: {err}"),
+                None,
+            )),
+        }
+    }
 }
 
 fn decision_str(d: homn_types::Decision) -> &'static str {
@@ -428,6 +481,7 @@ mod tests {
             rules: Arc::new(ArcSwap::from_pointee(rules)),
             audit,
             brain: None,
+            commitments: None,
         }
     }
 
@@ -482,6 +536,7 @@ mod tests {
             rules: Arc::new(ArcSwap::from_pointee(rules)),
             audit,
             brain: Some(brain),
+            commitments: None,
         }
     }
 
@@ -558,6 +613,105 @@ mod tests {
             .expect_err("from > to");
         assert!(
             err.message.to_lowercase().contains("must not be after"),
+            "{}",
+            err.message
+        );
+    }
+
+    async fn state_with_commitments(c: Arc<dyn Commitments>) -> McpState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+            brain: None,
+            commitments: Some(c),
+        }
+    }
+
+    #[tokio::test]
+    async fn commitments_tool_returns_the_store_contents() {
+        use homn_types::{CommitmentId, ExtractionSource, Party};
+        let store = Arc::new(MemoryCommitments::new());
+        store.push(homn_types::Commitment {
+            id: CommitmentId::new(),
+            text: "I'll send the pricing quote by Friday".into(),
+            owner: Party::Me,
+            counterpart: Some(Party::Entity("Marco".into())),
+            due: None,
+            status: homn_types::CommitmentStatus::Open,
+            source_obs: "obs-1".into(),
+            extracted_by: ExtractionSource::Regex,
+            disclosure_receipt: None,
+            created_at: chrono::Utc::now(),
+        });
+        let state = state_with_commitments(store.clone()).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .commitments(Parameters(CommitmentsArgs {
+                status: None,
+                due_before: None,
+            }))
+            .await
+            .unwrap();
+        let body = res.content[0].as_text().unwrap().text.clone();
+        let cs: Vec<homn_types::Commitment> = serde_json::from_str(&body).unwrap();
+        assert_eq!(cs.len(), 1);
+        assert!(cs[0].text.contains("pricing quote"));
+        assert!(matches!(&cs[0].counterpart, Some(homn_types::Party::Entity(n)) if n == "Marco"));
+    }
+
+    #[tokio::test]
+    async fn commitments_tool_filters_by_status() {
+        use homn_types::{CommitmentId, ExtractionSource, Party};
+        let store = Arc::new(MemoryCommitments::new());
+        for (txt, status) in [
+            ("open one", homn_types::CommitmentStatus::Open),
+            ("done one", homn_types::CommitmentStatus::Fulfilled),
+        ] {
+            store.push(homn_types::Commitment {
+                id: CommitmentId::new(),
+                text: txt.into(),
+                owner: Party::Me,
+                counterpart: None,
+                due: None,
+                status,
+                source_obs: "obs".into(),
+                extracted_by: ExtractionSource::Regex,
+                disclosure_receipt: None,
+                created_at: chrono::Utc::now(),
+            });
+        }
+        let state = state_with_commitments(store).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .commitments(Parameters(CommitmentsArgs {
+                status: Some("fulfilled".into()),
+                due_before: None,
+            }))
+            .await
+            .unwrap();
+        let cs: Vec<homn_types::Commitment> =
+            serde_json::from_str(&res.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].text, "done one");
+    }
+
+    #[tokio::test]
+    async fn commitments_without_a_store_returns_a_clear_error() {
+        let state = test_state("").await;
+        let server = HomnMcpServer::new(state);
+        let err = server
+            .commitments(Parameters(CommitmentsArgs {
+                status: None,
+                due_before: None,
+            }))
+            .await
+            .expect_err("no commitments wired");
+        assert!(
+            err.message.to_lowercase().contains("no commitment"),
             "{}",
             err.message
         );

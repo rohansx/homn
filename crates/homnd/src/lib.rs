@@ -16,19 +16,23 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod commitments;
 pub mod control;
 pub mod daemon;
 pub mod dedupe;
+pub mod extract;
 pub mod pipeline;
 pub mod session;
 pub mod store;
 
+pub use commitments::{CommitmentStore, MemoryCommitmentStore};
 pub use control::{
     default_socket_path as default_control_socket_path, ControlClient, ControlOp, ControlRequest,
     ControlResponse, ControlServer, ControlState,
 };
 pub use daemon::{run_capture_daemon, CaptureDaemonConfig};
 pub use dedupe::Dedupe;
+pub use extract::{extract_commitments, CommitmentExtractor, RegexExtractor};
 pub use pipeline::{drain, Pipeline, PipelineStats, Processed, TickResult};
 pub use session::Sessionizer;
 pub use store::{MemoryStore, Store};

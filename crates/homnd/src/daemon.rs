@@ -57,8 +57,15 @@ pub async fn run_capture_daemon(cfg: CaptureDaemonConfig) -> anyhow::Result<()> 
     };
     let gate = Gate::new(policy);
 
-    // 2. Store: agidb if a brain path is given (feature-gated), else in-memory.
-    let store: Arc<dyn Store> = open_store(&cfg.brain_path).await?;
+    // 2. Store: agidb if a brain path is given (feature-gated), else in-memory. Wrap it in an
+    //    ExtractingStore so write-time commitment extraction runs after each store (US5).
+    let inner_store: Arc<dyn Store> = open_store(&cfg.brain_path).await?;
+    let commitment_store = Arc::new(crate::commitments::MemoryCommitmentStore::new());
+    let store: Arc<dyn Store> = Arc::new(crate::store::ExtractingStore::new(
+        inner_store,
+        Some(Arc::new(crate::extract::RegexExtractor::new())),
+        Some(commitment_store.clone()),
+    ));
 
     // 3. Audit DB (watermarks + receipts).
     if let Some(parent) = cfg.audit_db_path.parent() {
