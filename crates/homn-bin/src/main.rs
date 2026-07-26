@@ -100,6 +100,11 @@ enum Command {
         /// `--features brain-agidb`. Without it, the recall/timeline tools return "no brain".
         #[arg(long)]
         brain: Option<PathBuf>,
+        /// Path to the commitments sqlite DB to serve `commitments()` against (the file the
+        /// daemon writes via write-time extraction). Without it, `commitments()` returns "no
+        /// commitments".
+        #[arg(long)]
+        commitments_db: Option<PathBuf>,
     },
     /// Invoked by Claude Code hooks via ~/.claude/settings.json. T029 implements.
     Hook {
@@ -467,7 +472,11 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", serde_json::to_string(&response)?);
         }
-        Some(Command::Mcp { transport, brain }) => {
+        Some(Command::Mcp {
+            transport,
+            brain,
+            commitments_db,
+        }) => {
             // T078: start the MCP server. stdio is what Claude Code's MCP config invokes;
             // HTTP transport (T071) lands in a follow-up.
             let config_path = homn_daemon::config::default_config_path();
@@ -488,12 +497,24 @@ async fn main() -> anyhow::Result<()> {
             }
             let audit = std::sync::Arc::new(homn_audit::Db::open(&config.audit.db_path).await?);
             let brain = open_brain(brain.as_deref()).await?;
+            // Default the commitments DB to the path the daemon writes (next to the audit DB).
+            let commitments_db = commitments_db.or_else(|| {
+                Some(
+                    config
+                        .audit
+                        .db_path
+                        .parent()
+                        .unwrap_or(&config.audit.db_path)
+                        .join("commitments.db"),
+                )
+            });
+            let commitments = open_commitments(commitments_db.as_deref())?;
             let state = homn_mcp::McpState {
                 engine,
                 rules: rules_handle,
                 audit,
                 brain,
-                commitments: None,
+                commitments,
             };
             match transport {
                 Some(McpTransport::Stdio) | None => {
@@ -1301,6 +1322,34 @@ async fn open_brain(
     }
 }
 
+/// Open the commitments sqlite read-side and wrap it as a [`homn_mcp::Commitments`] handle, so
+/// the MCP `commitments()` tool can query what the daemon extracted (cross-process via the
+/// shared sqlite file). `None` when no path is given → no commitments (the tool returns a clear
+/// error).
+fn open_commitments(
+    path: Option<&Path>,
+) -> anyhow::Result<Option<std::sync::Arc<dyn homn_mcp::Commitments>>> {
+    let Some(path) = path else { return Ok(None) };
+    let store = std::sync::Arc::new(homnd::SqliteCommitmentStore::open(path)?);
+    Ok(Some(std::sync::Arc::new(CommitmentStoreCommitments(store))))
+}
+
+/// Bridge: a [`homn_mcp::Commitments`] impl over a [`homnd::SqliteCommitmentStore`] — the MCP
+/// `commitments()` tool reads the shared sqlite file the daemon writes.
+struct CommitmentStoreCommitments(std::sync::Arc<homnd::SqliteCommitmentStore>);
+
+#[async_trait::async_trait]
+impl homn_mcp::Commitments for CommitmentStoreCommitments {
+    async fn commitments(
+        &self,
+        status: Option<homn_types::CommitmentStatus>,
+        due_before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<Vec<homn_types::Commitment>> {
+        use homnd::CommitmentStore;
+        self.0.query(status, due_before, chrono::Utc::now())
+    }
+}
+
 // ===== `homn capture` (v2: T029) ======================================================
 
 async fn capture_command(action: CaptureAction) -> anyhow::Result<()> {
@@ -1325,6 +1374,12 @@ async fn capture_command(action: CaptureAction) -> anyhow::Result<()> {
                 brain_path: brain,
                 ingest_policy_path: config.policy.policies_dir.join("ingest.rhai"),
                 audit_db_path: config.audit.db_path.clone(),
+                commitments_db_path: config
+                    .audit
+                    .db_path
+                    .parent()
+                    .unwrap_or(&config.audit.db_path)
+                    .join("commitments.db"),
                 socket_path: homnd::default_control_socket_path(),
             };
             homnd::run_capture_daemon(cfg).await?;

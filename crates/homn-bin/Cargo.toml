@@ -24,6 +24,7 @@ homn-policy   = { workspace = true }
 homn-learning = { workspace = true }
 homn-eval     = { workspace = true }
 agidb         = { workspace = true, optional = true }
+async-trait   = { workspace = true }
 regex         = { workspace = true }
 arc-swap      = { workspace = true }
 

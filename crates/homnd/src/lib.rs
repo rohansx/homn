@@ -25,7 +25,7 @@ pub mod pipeline;
 pub mod session;
 pub mod store;
 
-pub use commitments::{CommitmentStore, MemoryCommitmentStore};
+pub use commitments::{CommitmentStore, MemoryCommitmentStore, SqliteCommitmentStore};
 pub use control::{
     default_socket_path as default_control_socket_path, ControlClient, ControlOp, ControlRequest,
     ControlResponse, ControlServer, ControlState,

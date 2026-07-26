@@ -24,6 +24,7 @@ ulid         = { workspace = true }
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
 regex        = { workspace = true }
+rusqlite     = { workspace = true }
 agidb        = { workspace = true, optional = true }
 
 [features]
