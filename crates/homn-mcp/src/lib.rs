@@ -158,6 +158,21 @@ pub struct BeliefsArgs {
     pub current_only: bool,
 }
 
+/// Args for `whodis` (v2: US6) — a relationship dossier for a named person.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct WhodisArgs {
+    /// The person's name (e.g. "Sarah", "Marco").
+    pub name: String,
+}
+
+/// Args for `today` / `standup` (v2: US6) — a daily recap.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TodayArgs {
+    /// The date to recap, as `YYYY-MM-DD` (defaults to today UTC when omitted).
+    #[serde(default)]
+    pub date: Option<String>,
+}
+
 fn parse_iso(s: &str) -> Result<chrono::DateTime<chrono::Utc>, McpError> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -407,6 +422,110 @@ impl HomnMcpServer {
                 None,
             )),
         }
+    }
+
+    #[tool(
+        description = "Relationship dossier for a person: interactions count, last thread, and open loops (commitments owed to/from them). Aggregates recall + commitments — pure local, no network. Args: name (the person)."
+    )]
+    async fn whodis(
+        &self,
+        Parameters(args): Parameters<WhodisArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let brain = self.state.brain.as_ref().ok_or_else(|| {
+            McpError::internal_error("no brain wired — whodis needs recall", None)
+        })?;
+        // Interactions = recall hits that mention the name; last_thread = the most recent.
+        let hits = brain
+            .recall(&args.name, None, 50)
+            .await
+            .map_err(|e| McpError::internal_error(format!("recall failed: {e}"), None))?;
+        let interactions_count = hits.len();
+        let last_thread = hits.iter().max_by_key(|h| h.captured_at).cloned();
+        // Open loops = open commitments where this person is the counterpart.
+        let mut open_loops = Vec::new();
+        if let Some(cs) = self.state.commitments.as_ref() {
+            let all = cs
+                .commitments(Some(homn_types::CommitmentStatus::Open), None)
+                .await
+                .map_err(|e| McpError::internal_error(format!("commitments failed: {e}"), None))?;
+            open_loops = all
+                .into_iter()
+                .filter(|c| {
+                    let owner_is = matches!(&c.owner, homn_types::Party::Entity(n) if n.eq_ignore_ascii_case(&args.name));
+                    let counterpart_is = matches!(&c.counterpart, Some(homn_types::Party::Entity(n)) if n.eq_ignore_ascii_case(&args.name));
+                    owner_is || counterpart_is
+                })
+                .map(|c| serde_json::json!({
+                    "text": c.text,
+                    "due": c.due.map(|d| d.to_rfc3339()),
+                    "owner": c.owner,
+                }))
+                .collect();
+        }
+        let body = serde_json::json!({
+            "entity": args.name,
+            "interactions_count": interactions_count,
+            "last_thread": last_thread,
+            "open_loops": open_loops,
+        });
+        Ok(CallToolResult::success(vec![Content::json(body)?]))
+    }
+
+    #[tool(
+        description = "Daily recap: what you did today (timeline), plus commitments touched (due or created today). Aggregates timeline + commitments — pure local, no network. Args: date (optional YYYY-MM-DD, defaults to today UTC)."
+    )]
+    async fn today(
+        &self,
+        Parameters(args): Parameters<TodayArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let brain = self.state.brain.as_ref().ok_or_else(|| {
+            McpError::internal_error("no brain wired — today needs timeline", None)
+        })?;
+        // Resolve the day (UTC), [00:00, 24:00).
+        let day = match args.date.as_deref() {
+            Some(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
+                McpError::invalid_params(
+                    format!("invalid date `{s}` (expect YYYY-MM-DD): {e}"),
+                    None,
+                )
+            })?,
+            None => chrono::Utc::now().date_naive(),
+        };
+        let from = day.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let to = (day + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        // "did" = the day's timeline entries (sessions are the entries themselves).
+        let did = brain
+            .timeline("", from, to)
+            .await
+            .map_err(|e| McpError::internal_error(format!("timeline failed: {e}"), None))?;
+        let sessions: Vec<_> = did
+            .iter()
+            .map(|e| serde_json::json!({ "at": e.at.to_rfc3339(), "text": e.text, "source": e.source }))
+            .collect();
+        // Commitments touched = open commitments due on/before end-of-day (due today or overdue).
+        let mut commitments_touched = Vec::new();
+        if let Some(cs) = self.state.commitments.as_ref() {
+            let due = cs
+                .commitments(Some(homn_types::CommitmentStatus::Open), Some(to))
+                .await
+                .map_err(|e| McpError::internal_error(format!("commitments failed: {e}"), None))?;
+            commitments_touched = due
+                .into_iter()
+                .map(|c| serde_json::json!({ "text": c.text, "due": c.due.map(|d| d.to_rfc3339()), "owner": c.owner }))
+                .collect();
+        }
+        let body = serde_json::json!({
+            "date": day.to_string(),
+            "sessions": sessions,
+            "did_count": did.len(),
+            "commitments_touched": commitments_touched,
+        });
+        Ok(CallToolResult::success(vec![Content::json(body)?]))
     }
 }
 
@@ -820,6 +939,139 @@ mod tests {
             .expect_err("no beliefs wired");
         assert!(
             err.message.to_lowercase().contains("no belief"),
+            "{}",
+            err.message
+        );
+    }
+
+    async fn state_with_brain_and_commitments(
+        brain: Arc<dyn Brain>,
+        commitments: Arc<dyn Commitments>,
+    ) -> McpState {
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+            brain: Some(brain),
+            commitments: Some(commitments),
+            beliefs: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn whodis_aggregates_interactions_and_open_loops() {
+        use homn_types::{CommitmentId, ExtractionSource, Party};
+        // Brain with one interaction mentioning Sarah.
+        let brain = Arc::new(MemoryBrain::new());
+        brain
+            .push(homn_types::Observation {
+                id: ulid::Ulid::new(),
+                source: homn_types::SourceKind::ScreenOcr,
+                app: Some("Slack".into()),
+                captured_at: chrono::Utc::now(),
+                ingested_at: chrono::Utc::now(),
+                text: "Sarah promised the user research by Wednesday".into(),
+                redactions: vec![],
+                session: None,
+                speaker: None,
+                content_hash: 0,
+                provenance: homn_types::Provenance {
+                    source_id: "test".into(),
+                    upstream_ref: "t".into(),
+                },
+            })
+            .await;
+        // Commitments: one open loop owed to Sarah.
+        let cs = Arc::new(MemoryCommitments::new());
+        cs.push(homn_types::Commitment {
+            id: CommitmentId::new(),
+            text: "user research by Wednesday".into(),
+            owner: Party::Entity("Sarah".into()),
+            counterpart: Some(Party::Me),
+            due: None,
+            status: homn_types::CommitmentStatus::Open,
+            source_obs: "obs".into(),
+            extracted_by: ExtractionSource::Regex,
+            disclosure_receipt: None,
+            created_at: chrono::Utc::now(),
+        });
+        let state = state_with_brain_and_commitments(brain, cs).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .whodis(Parameters(WhodisArgs {
+                name: "Sarah".into(),
+            }))
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&res.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(body["entity"], "Sarah");
+        assert!(
+            body["interactions_count"].as_u64().unwrap() >= 1,
+            "Sarah is recalled"
+        );
+        assert!(
+            !body["open_loops"].as_array().unwrap().is_empty(),
+            "an open loop with Sarah"
+        );
+    }
+
+    #[tokio::test]
+    async fn today_returns_the_days_timeline_and_commitments_due() {
+        // Brain with a timeline entry today.
+        let brain = Arc::new(MemoryBrain::new());
+        let now = chrono::Utc::now();
+        brain
+            .push(homn_types::Observation {
+                id: ulid::Ulid::new(),
+                source: homn_types::SourceKind::ScreenOcr,
+                app: Some("VS Code".into()),
+                captured_at: now,
+                ingested_at: now,
+                text: "wired the whodis tool".into(),
+                redactions: vec![],
+                session: None,
+                speaker: None,
+                content_hash: 0,
+                provenance: homn_types::Provenance {
+                    source_id: "test".into(),
+                    upstream_ref: "t".into(),
+                },
+            })
+            .await;
+        let cs = Arc::new(MemoryCommitments::new());
+        let state = state_with_brain_and_commitments(brain, cs).await;
+        let server = HomnMcpServer::new(state);
+        let res = server
+            .today(Parameters(TodayArgs { date: None }))
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&res.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            body["did_count"].as_u64().unwrap() >= 1,
+            "today's timeline has the entry"
+        );
+        assert!(body["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["text"] == "wired the whodis tool"));
+    }
+
+    #[tokio::test]
+    async fn whodis_without_a_brain_returns_a_clear_error() {
+        let state = test_state("").await;
+        let server = HomnMcpServer::new(state);
+        let err = server
+            .whodis(Parameters(WhodisArgs { name: "x".into() }))
+            .await
+            .expect_err("no brain");
+        assert!(
+            err.message.to_lowercase().contains("no brain"),
             "{}",
             err.message
         );
