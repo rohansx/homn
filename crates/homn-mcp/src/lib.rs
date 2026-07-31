@@ -24,6 +24,7 @@
 mod beliefs;
 mod brain;
 mod commitments;
+mod forget;
 mod rate_limit;
 
 pub use beliefs::{Beliefs, MemoryBeliefs};
@@ -31,6 +32,7 @@ pub use beliefs::{Beliefs, MemoryBeliefs};
 pub use brain::AgidbBrain;
 pub use brain::{Brain, MemoryBrain, RecallHit, RecordingBrain, TimelineEntry};
 pub use commitments::{Commitments, MemoryCommitments};
+pub use forget::{Forget, MemoryForget};
 pub use rate_limit::{RateLimited, RateLimiter, DEFAULT_MAX_PER_WINDOW, DEFAULT_WINDOW};
 
 use std::sync::Arc;
@@ -62,6 +64,9 @@ pub struct McpState {
     /// The belief store for `beliefs(topic)` (v2 US5/US6). `None` when no belief source is
     /// wired; the tool then returns a clear "no beliefs" error.
     pub beliefs: Option<Arc<dyn Beliefs>>,
+    /// The unlearn handle for `forget(scope)` (v2 US4) — the one write tool. `None` when no
+    /// forget source is wired; the tool then returns a clear "no forget wired" error.
+    pub forget: Option<Arc<dyn Forget>>,
 }
 
 // ============================================================================
@@ -171,6 +176,23 @@ pub struct TodayArgs {
     /// The date to recap, as `YYYY-MM-DD` (defaults to today UTC when omitted).
     #[serde(default)]
     pub date: Option<String>,
+}
+
+/// Args for `forget` (v2: US4) — the one write tool. Exactly one of entity/pattern/from+to.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ForgetArgs {
+    /// Forget everything about a named entity.
+    #[serde(default)]
+    pub entity: Option<String>,
+    /// Forget everything matching a pattern.
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// Time-range start (ISO-8601). Use with `to`.
+    #[serde(default)]
+    pub from: Option<String>,
+    /// Time-range end (ISO-8601). Use with `from`.
+    #[serde(default)]
+    pub to: Option<String>,
 }
 
 fn parse_iso(s: &str) -> Result<chrono::DateTime<chrono::Utc>, McpError> {
@@ -527,6 +549,50 @@ impl HomnMcpServer {
         });
         Ok(CallToolResult::success(vec![Content::json(body)?]))
     }
+
+    #[tool(
+        description = "Forget (unlearn) memories matching a scope — the one write tool. After success the matched memory stops surfacing in the other tools. Returns a receipt_id + match_count + scope (proves the scope without re-exposing content). Args: entity (name) OR pattern OR from+to (ISO-8601 window)."
+    )]
+    async fn forget(
+        &self,
+        Parameters(args): Parameters<ForgetArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.enforce_rate_limit()?;
+        let forget = self.state.forget.as_ref().ok_or_else(|| {
+            McpError::internal_error("no forget handle wired into this MCP server", None)
+        })?;
+        let scope = if let Some(name) = args.entity {
+            homn_types::ForgetScope::Entity(name)
+        } else if let Some(p) = args.pattern {
+            homn_types::ForgetScope::Pattern(p)
+        } else if let (Some(f), Some(t)) = (args.from.as_ref(), args.to.as_ref()) {
+            let from = parse_iso(f)?;
+            let to = parse_iso(t)?;
+            if from > to {
+                return Err(McpError::invalid_params(
+                    format!("`from` ({from}) must not be after `to` ({to})"),
+                    None,
+                ));
+            }
+            homn_types::ForgetScope::TimeRange { from, to }
+        } else {
+            return Err(McpError::invalid_params(
+                "specify a scope: entity, pattern, or from+to",
+                None,
+            ));
+        };
+        let receipt = forget
+            .forget(&scope)
+            .await
+            .map_err(|e| McpError::internal_error(format!("forget failed: {e}"), None))?;
+        let body = serde_json::json!({
+            "receipt_id": format!("del-{}", receipt.match_count), // opaque id; the ledger seq is added by the daemon
+            "scope": receipt.scope,
+            "match_count": receipt.match_count,
+            "at": receipt.at.to_rfc3339(),
+        });
+        Ok(CallToolResult::success(vec![Content::json(body)?]))
+    }
 }
 
 fn decision_str(d: homn_types::Decision) -> &'static str {
@@ -637,6 +703,7 @@ mod tests {
             brain: None,
             commitments: None,
             beliefs: None,
+            forget: None,
         }
     }
 
@@ -693,6 +760,7 @@ mod tests {
             brain: Some(brain),
             commitments: None,
             beliefs: None,
+            forget: None,
         }
     }
 
@@ -785,6 +853,7 @@ mod tests {
             brain: None,
             commitments: Some(c),
             beliefs: None,
+            forget: None,
         }
     }
 
@@ -885,6 +954,7 @@ mod tests {
             brain: None,
             commitments: None,
             beliefs: Some(b),
+            forget: None,
         }
     }
 
@@ -958,6 +1028,7 @@ mod tests {
             brain: Some(brain),
             commitments: Some(commitments),
             beliefs: None,
+            forget: None,
         }
     }
 
@@ -1074,6 +1145,199 @@ mod tests {
             err.message.to_lowercase().contains("no brain"),
             "{}",
             err.message
+        );
+    }
+
+    /// T057: the seven-tool MCP surface answers its query types end-to-end with provenance, in
+    /// one pass. Populates brain + commitments + beliefs + forget, then drives recall, timeline,
+    /// commitments, beliefs, whodis, today, forget in sequence.
+    #[tokio::test]
+    async fn seven_tools_answer_with_provenance_in_one_pass() {
+        use homn_types::{BeliefId, CommitmentId, ExtractionSource, ForgetScope, Party};
+
+        // --- populate ---
+        let brain = Arc::new(MemoryBrain::new());
+        let now = chrono::Utc::now();
+        brain
+            .push(homn_types::Observation {
+                id: ulid::Ulid::new(),
+                source: homn_types::SourceKind::ScreenOcr,
+                app: Some("Slack".into()),
+                captured_at: now,
+                ingested_at: now,
+                text: "Sarah promised the user research by Wednesday; I'll send Marco the pricing quote by Friday".into(),
+                redactions: vec![],
+                session: None,
+                speaker: None,
+                content_hash: 0,
+                provenance: homn_types::Provenance {
+                    source_id: "screen_ocr".into(),
+                    upstream_ref: "t".into(),
+                },
+            })
+            .await;
+
+        let commitments = Arc::new(MemoryCommitments::new());
+        commitments.push(homn_types::Commitment {
+            id: CommitmentId::new(),
+            text: "I'll send Marco the pricing quote by Friday".into(),
+            owner: Party::Me,
+            counterpart: Some(Party::Entity("Marco".into())),
+            due: Some(chrono::Utc::now() + chrono::Duration::days(7)),
+            status: homn_types::CommitmentStatus::Open,
+            source_obs: "obs".into(),
+            extracted_by: ExtractionSource::Regex,
+            disclosure_receipt: None,
+            created_at: now,
+        });
+
+        let beliefs = Arc::new(MemoryBeliefs::new());
+        beliefs.push(homn_types::Belief {
+            id: BeliefId::new(),
+            topic: "the brain".into(),
+            position: "agidb is good enough after the gate".into(),
+            confidence: 1.0,
+            valid_from: now,
+            superseded_at: None,
+            source_obs: "obs".into(),
+            extracted_by: ExtractionSource::Regex,
+            disclosure_receipt: None,
+            created_at: now,
+        });
+
+        let forget = Arc::new(MemoryForget::returning(homn_types::DeletionReceipt {
+            scope: ForgetScope::Entity("Sarah".into()),
+            match_count: 1,
+            at: now,
+        }));
+
+        let engine = Engine::new();
+        let rules = RuleSet::parse(&engine, "", "test.rhai").unwrap();
+        let audit = Arc::new(Db::in_memory().await.unwrap());
+        let state = McpState {
+            engine,
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
+            audit,
+            brain: Some(brain as Arc<dyn Brain>),
+            commitments: Some(commitments as Arc<dyn Commitments>),
+            beliefs: Some(beliefs as Arc<dyn Beliefs>),
+            forget: Some(forget as Arc<dyn Forget>),
+        };
+        let server = HomnMcpServer::new(state);
+
+        // 1. recall — surfaces the observation with provenance.
+        let r = server
+            .recall(Parameters(RecallArgs {
+                cue: "Sarah pricing".into(),
+                as_of: None,
+                k: 5,
+            }))
+            .await
+            .unwrap();
+        let hits: Vec<RecallHit> =
+            serde_json::from_str(&r.content[0].as_text().unwrap().text).unwrap();
+        assert!(!hits.is_empty(), "recall surfaces the observation");
+        assert!(
+            !hits[0].source.is_empty(),
+            "recall hit carries provenance (source)"
+        );
+        assert!(
+            !hits[0].observation_id.is_empty(),
+            "recall hit carries observation_id"
+        );
+
+        // 2. timeline — chronological entries for today.
+        let day = now.date_naive().format("%Y-%m-%d").to_string();
+        let t = server
+            .timeline(Parameters(TimelineArgs {
+                subject: "".into(),
+                from: format!("{day}T00:00:00Z"),
+                to: format!("{day}T23:59:59Z"),
+            }))
+            .await
+            .unwrap();
+        let entries: Vec<TimelineEntry> =
+            serde_json::from_str(&t.content[0].as_text().unwrap().text).unwrap();
+        assert!(!entries.is_empty(), "timeline has today's entry");
+
+        // 3. commitments — the open Marco pricing commitment.
+        let c = server
+            .commitments(Parameters(CommitmentsArgs {
+                status: Some("open".into()),
+                due_before: None,
+            }))
+            .await
+            .unwrap();
+        let cs: Vec<homn_types::Commitment> =
+            serde_json::from_str(&c.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            cs.iter().any(|x| x.text.contains("pricing quote")),
+            "commitments returns the promise"
+        );
+
+        // 4. beliefs — the current brain position.
+        let b = server
+            .beliefs(Parameters(BeliefsArgs {
+                topic: "brain".into(),
+                current_only: true,
+            }))
+            .await
+            .unwrap();
+        let bs: Vec<homn_types::Belief> =
+            serde_json::from_str(&b.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            bs.iter()
+                .any(|x| x.position.contains("agidb is good enough")),
+            "beliefs returns the position"
+        );
+
+        // 5. whodis — Sarah's dossier (interactions + open loops).
+        let w = server
+            .whodis(Parameters(WhodisArgs {
+                name: "Sarah".into(),
+            }))
+            .await
+            .unwrap();
+        let wv: serde_json::Value =
+            serde_json::from_str(&w.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            wv["interactions_count"].as_u64().unwrap() >= 1,
+            "whodis counts Sarah interactions"
+        );
+
+        // 6. today — the day's recap.
+        let td = server
+            .today(Parameters(TodayArgs {
+                date: Some(day.clone()),
+            }))
+            .await
+            .unwrap();
+        let tdv: serde_json::Value =
+            serde_json::from_str(&td.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            tdv["did_count"].as_u64().unwrap() >= 1,
+            "today has the day's timeline"
+        );
+
+        // 7. forget — the one write tool; returns a receipt proving the scope.
+        let f = server
+            .forget(Parameters(ForgetArgs {
+                entity: Some("Sarah".into()),
+                pattern: None,
+                from: None,
+                to: None,
+            }))
+            .await
+            .unwrap();
+        let fv: serde_json::Value =
+            serde_json::from_str(&f.content[0].as_text().unwrap().text).unwrap();
+        assert!(
+            fv["match_count"].as_u64().unwrap() >= 1,
+            "forget returns the match count"
+        );
+        assert!(
+            fv["scope"]["kind"] == "entity",
+            "forget proves the scope without re-exposing content"
         );
     }
 

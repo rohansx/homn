@@ -550,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
                 brain,
                 commitments,
                 beliefs,
+                forget: None,
             };
             match transport {
                 Some(McpTransport::Stdio) | None => {
